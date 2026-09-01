@@ -17,7 +17,6 @@ jobs:
     env:
       ANDROID_API: "34"
       NDK_VERSION: "29.0.14206865"
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
 
     steps:
       - name: Checkout
@@ -67,22 +66,32 @@ jobs:
           git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git mesa
           cd mesa
           echo "Mesa commit: $(git rev-parse --short HEAD)"
-          git rev-parse HEAD > ../mesa_commit.txt
+          git rev-parse --short HEAD > ../mesa_commit.txt
 
       - name: Create Android cross file
         run: |
           NDK="\( ANDROID_HOME/ndk/ \){NDK_VERSION}"
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          CLANG="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang"
+          CLANGXX="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang++"
+
+          echo "Using clang: $CLANG"
+          echo "Using clang++: $CLANGXX"
+
+          if [ ! -f "$CLANG" ]; then
+            echo "ERROR: Clang not found!"
+            ls -la "$TOOLCHAIN/bin/" | head -30
+            exit 1
+          fi
 
           cat > android-aarch64.txt << EOF
           [binaries]
           ar = '$TOOLCHAIN/bin/llvm-ar'
-          c = ['ccache', '\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang']
-          cpp = ['ccache', '\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang++']
+          c = ['ccache', '$CLANG']
+          cpp = ['ccache', '$CLANGXX']
           strip = '$TOOLCHAIN/bin/llvm-strip'
           c_ld = '$TOOLCHAIN/bin/ld.lld'
           cpp_ld = '$TOOLCHAIN/bin/ld.lld'
-          llvm-config = '$TOOLCHAIN/bin/llvm-config'
 
           [built-in options]
           c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-flto=thin']
@@ -96,6 +105,9 @@ jobs:
           cpu = 'armv8'
           endian = 'little'
           EOF
+
+          echo "===== Cross file ====="
+          cat android-aarch64.txt
 
       - name: Configure Mesa
         working-directory: mesa
@@ -130,8 +142,7 @@ jobs:
       - name: Locate driver
         id: locate
         run: |
-          # Шукаємо драйвер у всіх можливих місцях
-          DRIVER=$(find /tmp/zt740 -name "libvulkan_freedreno.so" -type f | head -n1)
+          DRIVER=$(find /tmp/zt740 -name "libvulkan_freedreno.so" -type f | head -n 1)
 
           if [ -z "$DRIVER" ]; then
             echo "Driver not found!"
@@ -150,7 +161,7 @@ jobs:
           mkdir -p release
           cp "${{ steps.locate.outputs.driver_path }}" release/libvulkan_freedreno.so
 
-          MESA_HASH=$(cat mesa_commit.txt | cut -c1-9)
+          MESA_HASH=$(cat mesa_commit.txt)
           DATE=$(date -u +%Y%m%d)
 
           cat > release/meta.json << EOF
@@ -172,7 +183,7 @@ jobs:
             libvulkan_freedreno.so \
             meta.json
 
-          echo "Package created:"
+          echo "===== Package created ====="
           ls -lh ../ZT740-Optimized-*.zip
           unzip -l ../ZT740-Optimized-*.zip
 
