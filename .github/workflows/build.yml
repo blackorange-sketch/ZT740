@@ -1,4 +1,4 @@
-name: Build ZT740 Patched Driver
+name: Build ZT740 BASE
 
 on:
   workflow_dispatch:
@@ -29,8 +29,8 @@ jobs:
           sudo apt-get install -y \
             git \
             python3 \
+            python3-pip \
             python3-mako \
-            python3-yaml \
             ninja-build \
             flex \
             bison \
@@ -39,14 +39,15 @@ jobs:
             zip \
             unzip \
             ccache \
-            clang \
-            lld
+            patchelf \
+            file \
+            binutils
 
-      - name: Install latest Meson
+      - name: Install current Meson
         run: |
           python3 -m pip install --user --upgrade meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          meson --version
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/meson" --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -57,23 +58,18 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth=50 https://gitlab.freedesktop.org/mesa/mesa.git mesa
+          git clone \
+            --depth=1 \
+            https://gitlab.freedesktop.org/mesa/mesa.git \
+            mesa
 
-      - name: Fetch and Apply Turnip Patches
-        working-directory: mesa
-        run: |
-          # Клонуємо репозиторій із патчами під Adreno 7xx / adrenotools
-          git clone --depth=1 https://github.com/K11OG/turnip-patches.git ../patches || true
-          
-          if [ -d "../patches" ]; then
-            echo "Applying patches..."
-            for patch in ../patches/*.patch; do
-              if [ -f "$patch" ]; then
-                echo "Applying $patch"
-                git apply --reject --whitespace=fix "$patch" || true
-              fi
-            done
-          fi
+          cd mesa
+
+          echo "Mesa commit:"
+          git rev-parse HEAD
+
+          echo "Mesa describe:"
+          git describe --always || true
 
       - name: Create Android cross file
         run: |
@@ -85,8 +81,9 @@ jobs:
           ar = '$TOOLCHAIN/bin/llvm-ar'
           c = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang'
           cpp = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++'
+          c_ld = '$TOOLCHAIN/bin/ld.lld'
+          cpp_ld = '$TOOLCHAIN/bin/ld.lld'
           strip = '$TOOLCHAIN/bin/llvm-strip'
-          pkg-config = 'false'
 
           [host_machine]
           system = 'android'
@@ -95,61 +92,129 @@ jobs:
           endian = 'little'
           EOF
 
-      - name: Configure Mesa
+      - name: Create native file
+        run: |
+          cat > native.txt <<EOF
+          [binaries]
+          c = 'clang'
+          cpp = 'clang++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          c_ld = 'ld.lld'
+          cpp_ld = 'ld.lld'
+
+          [build_machine]
+          system = 'linux'
+          cpu_family = 'x86_64'
+          cpu = 'x86_64'
+          endian = 'little'
+          EOF
+
+      - name: Configure Mesa Turnip
         working-directory: mesa
         run: |
           meson setup build-android-aarch64 \
             --cross-file ../android-aarch64.txt \
+            --native-file ../native.txt \
+            --prefix /tmp/zt740-install \
             -Dbuildtype=release \
+            -Dstrip=true \
             -Dplatforms=android \
+            -Dvideo-codecs= \
             -Dplatform-sdk-version=${ANDROID_API} \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
-            -Degl=disabled \
             -Dgallium-drivers= \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
-            -Dc_link_args="-static-libgcc" \
-            -Dcpp_link_args="-static-libstdc++ -static-libgcc"
+            -Degl=disabled
 
-      - name: Build Turnip
+      - name: Build and install Turnip
         working-directory: mesa
         run: |
-          meson compile -C build-android-aarch64
+          ninja -C build-android-aarch64 install
 
-      - name: Create driver package
+      - name: Locate driver
         run: |
-          mkdir -p release
+          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
 
-          DRIVER=$(find mesa/build-android-aarch64 \
-            \( -name "libvulkan_freedreno.so" -o -name "libvulkan_freedesktop.so" \) \
-            | head -n 1)
+          if [ ! -f "$DRIVER" ]; then
+            echo "ERROR: Driver not found"
 
-          if [ -z "$DRIVER" ]; then
-            echo "ERROR: Turnip library not found"
+            echo "Searching:"
+            find /tmp/zt740-install -type f || true
+            find mesa/build-android-aarch64 \
+              -name "libvulkan_freedreno.so" \
+              -print || true
+
             exit 1
           fi
 
-          cp "$DRIVER" release/vulkan.turnip.so
+          echo "Driver found:"
+          ls -lh "$DRIVER"
+
+      - name: Inspect ELF
+        run: |
+          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
+
+          echo "===== FILE ====="
+          file "$DRIVER"
+
+          echo "===== ELF HEADER ====="
+          readelf -h "$DRIVER"
+
+          echo "===== SONAME ====="
+          readelf -d "$DRIVER" | grep SONAME || true
+
+          echo "===== NEEDED LIBRARIES ====="
+          readelf -d "$DRIVER" | grep NEEDED || true
+
+          echo "===== UNDEFINED SYMBOLS ====="
+          readelf -Ws "$DRIVER" \
+            | grep UND \
+            | head -n 100 \
+            || true
+
+      - name: Create AdrenoTools driver package
+        run: |
+          mkdir -p release
+
+          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
+
+          cp \
+            "$DRIVER" \
+            release/libvulkan_freedreno.so
+
+          MESA_HASH=$(cd mesa && git rev-parse --short HEAD)
 
           cat > release/meta.json <<EOF
           {
-            "name": "ZT740 Patched Turnip v24.3.0",
+            "schemaVersion": 1,
+            "name": "ZT740 BASE v0.2",
+            "description": "Upstream Mesa Turnip baseline for Snapdragon 8 Gen 2 / Adreno 740",
             "author": "blackorange-sketch",
-            "version": "24.3.0",
+            "packageVersion": "2",
             "vendor": "Mesa",
-            "driverVersion": "24.3.0",
+            "driverVersion": "Mesa-git-${MESA_HASH}",
             "minApi": 28,
-            "libraryName": "vulkan.turnip.so"
+            "libraryName": "libvulkan_freedreno.so"
           }
           EOF
 
           cd release
-          zip -9 -r ../ZT740-BASE-v0.1.zip vulkan.turnip.so meta.json
 
-      - name: Upload ZT740 driver
+          zip -9 \
+            ../ZT740-BASE-v0.2.zip \
+            libvulkan_freedreno.so \
+            meta.json
+
+      - name: Verify ZIP contents
+        run: |
+          unzip -l ZT740-BASE-v0.2.zip
+
+      - name: Upload ZT740 BASE
         uses: actions/upload-artifact@v4
         with:
-          name: ZT740-BASE-v0.1
-          path: ZT740-BASE-v0.1.zip
+          name: ZT740-BASE-v0.2
+          path: ZT740-BASE-v0.2.zip
           if-no-files-found: error
