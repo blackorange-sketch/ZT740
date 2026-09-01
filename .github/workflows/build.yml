@@ -40,7 +40,8 @@ jobs:
             ccache \
             file \
             binutils \
-            llvm
+            llvm \
+            curl
 
       - name: Install Meson
         run: |
@@ -63,23 +64,42 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git mesa
+          set -e
+          echo "Trying to clone Mesa from gitlab.freedesktop.org..."
+          
+          if git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git mesa; then
+            echo "Clone successful"
+          else
+            echo "GitLab is down, downloading archive instead..."
+            curl -L --retry 3 --retry-delay 5 -o mesa-main.tar.gz \
+              "https://gitlab.freedesktop.org/mesa/mesa/-/archive/main/mesa-main.tar.gz"
+            mkdir mesa
+            tar -xzf mesa-main.tar.gz --strip-components=1 -C mesa
+            rm -f mesa-main.tar.gz
+          fi
+
           cd mesa
-          echo "Mesa commit: $(git rev-parse --short HEAD)"
-          git rev-parse --short HEAD > ../mesa_commit.txt
+          if [ -d .git ]; then
+            echo "Mesa commit: $(git rev-parse --short HEAD)"
+            git rev-parse --short HEAD > ../mesa_commit.txt
+          else
+            echo "Using archive (no git history)"
+            echo "archive" > ../mesa_commit.txt
+          fi
 
       - name: Create Android cross file
         run: |
-          echo "=== DEBUG INFO ==="
-          echo "ANDROID_HOME = [${ANDROID_HOME}]"
-          echo "NDK_VERSION  = [${NDK_VERSION}]"
-          echo "ANDROID_API  = [${ANDROID_API}]"
-          echo "=================="
+          set -e
 
-          NDK_PATH="\( {ANDROID_HOME}/ndk/ \){NDK_VERSION}"
-          TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64"
-          CLANG="\( {TOOLCHAIN}/bin/aarch64-linux-android \){ANDROID_API}-clang"
-          CLANGXX="\( {TOOLCHAIN}/bin/aarch64-linux-android \){ANDROID_API}-clang++"
+          echo "=== DEBUG ==="
+          echo "ANDROID_HOME = $ANDROID_HOME"
+          echo "NDK_VERSION  = $NDK_VERSION"
+          echo "ANDROID_API  = $ANDROID_API"
+
+          NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
+          TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          CLANG="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang"
+          CLANGXX="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang++"
 
           echo "NDK_PATH  = $NDK_PATH"
           echo "TOOLCHAIN = $TOOLCHAIN"
@@ -87,27 +107,25 @@ jobs:
           echo "CLANGXX   = $CLANGXX"
 
           if [ ! -d "$TOOLCHAIN" ]; then
-            echo "ERROR: TOOLCHAIN directory does not exist!"
-            echo "Listing NDK contents:"
-            ls -la "${ANDROID_HOME}/ndk/" || true
-            ls -la "$NDK_PATH" || true
+            echo "ERROR: TOOLCHAIN directory not found!"
+            ls -la "$ANDROID_HOME/ndk/" || true
             exit 1
           fi
 
           if [ ! -f "$CLANG" ]; then
             echo "ERROR: Clang not found!"
-            ls -la "$TOOLCHAIN/bin/" | head -30
+            ls -la "$TOOLCHAIN/bin/" | head -40
             exit 1
           fi
 
           cat > android-aarch64.txt << EOF
           [binaries]
-          ar = '${TOOLCHAIN}/bin/llvm-ar'
-          c = ['ccache', '${CLANG}']
-          cpp = ['ccache', '${CLANGXX}']
-          strip = '${TOOLCHAIN}/bin/llvm-strip'
-          c_ld = '${TOOLCHAIN}/bin/ld.lld'
-          cpp_ld = '${TOOLCHAIN}/bin/ld.lld'
+          ar = '$TOOLCHAIN/bin/llvm-ar'
+          c = ['ccache', '$CLANG']
+          cpp = ['ccache', '$CLANGXX']
+          strip = '$TOOLCHAIN/bin/llvm-strip'
+          c_ld = '$TOOLCHAIN/bin/ld.lld'
+          cpp_ld = '$TOOLCHAIN/bin/ld.lld'
 
           [built-in options]
           c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-flto=thin']
@@ -122,7 +140,7 @@ jobs:
           endian = 'little'
           EOF
 
-          echo "===== Cross file created ====="
+          echo "===== Cross file ====="
           cat android-aarch64.txt
 
       - name: Configure Mesa
@@ -162,8 +180,8 @@ jobs:
 
           if [ -z "$DRIVER" ]; then
             echo "Driver not found!"
+            echo "Contents of /tmp/zt740:"
             find /tmp/zt740 -type f || true
-            find mesa/build-android-aarch64 -name "*freedreno*" || true
             exit 1
           fi
 
@@ -195,9 +213,11 @@ jobs:
           EOF
 
           cd release
-          zip -9 ../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip libvulkan_freedreno.so meta.json
+          zip -9 ../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip \
+            libvulkan_freedreno.so \
+            meta.json
 
-          echo "===== Package ====="
+          echo "===== Package created ====="
           ls -lh ../ZT740-Optimized-*.zip
           unzip -l ../ZT740-Optimized-*.zip
 
