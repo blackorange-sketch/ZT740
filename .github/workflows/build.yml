@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: zt740-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -17,6 +21,9 @@ jobs:
     env:
       ANDROID_API: "28"
       NDK_VERSION: "29.0.14206865"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 4G
+      CCACHE_COMPILERCHECK: content
 
     steps:
       - name: Checkout
@@ -28,25 +35,34 @@ jobs:
           sudo apt-get install -y \
             git python3 python3-pip python3-mako \
             ninja-build flex bison pkg-config glslang-tools \
-            zip unzip ccache file binutils llvm curl patchelf
+            zip unzip ccache file binutils curl patchelf
 
       - name: Install Meson
         run: |
           python3 -m pip install --user --upgrade meson
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          meson --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Cache NDK
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: \( {{ env.ANDROID_HOME }}/ndk/ \){{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}
+
       - name: Install Android NDK
+        if: steps.ndk-cache.outputs.cache-hit != 'true'
         run: sdkmanager "ndk;$NDK_VERSION"
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: turnip-zt740-linux
-          max-size: 2G
+          key: turnip-zt740
+          restore-keys: turnip-zt740
+          max-size: 4G
+          save: true
 
       - name: Clone Mesa
         run: |
@@ -77,24 +93,14 @@ jobs:
           api = os.environ["ANDROID_API"]
           ndk_ver = os.environ["NDK_VERSION"]
           android_home = os.environ["ANDROID_HOME"]
-
           toolchain = Path(android_home) / "ndk" / ndk_ver / "toolchains/llvm/prebuilt/linux-x86_64"
           clang = toolchain / "bin" / f"aarch64-linux-android{api}-clang"
           clangxx = toolchain / "bin" / f"aarch64-linux-android{api}-clang++"
-
-          print("ANDROID_HOME", android_home)
-          print("API", api)
           print("CLANG", clang)
-
           if not clang.is_file():
-              bin_dir = toolchain / "bin"
-              print("clang missing, listing:")
-              if bin_dir.is_dir():
-                  for p in sorted(bin_dir.glob("aarch64-linux-android*-clang")):
-                      print(" ", p.name)
-              raise SystemExit(1)
+              raise SystemExit("clang not found")
 
-          text = f"""
+          Path("android-aarch64.txt").write_text(f"""
           [binaries]
           ar = '{toolchain}/bin/llvm-ar'
           c = ['ccache', '{clang}']
@@ -114,8 +120,7 @@ jobs:
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          """
-          Path("android-aarch64.txt").write_text(text.lstrip(), encoding="utf-8")
+          """.lstrip())
           print(Path("android-aarch64.txt").read_text())
           PY
 
@@ -152,60 +157,51 @@ jobs:
             -Dbuild-tests=false \
             -Dtools=
 
-      - name: Build Turnip
+      - name: Build Turnip only
         working-directory: mesa
         run: |
-          meson compile -C build-android-aarch64 -j$(nproc)
-          meson install -C build-android-aarch64
+          meson compile -C build-android-aarch64 src/freedreno/vulkan/libvulkan_freedreno.so
+          ccache -s
 
       - name: Locate and verify driver
         run: |
           python3 - << 'PY'
-          import os, subprocess, sys
+          import subprocess, sys
           from pathlib import Path
 
-          found = list(Path("/tmp/zt740").rglob("libvulkan_freedreno.so"))
+          roots = [Path("mesa/build-android-aarch64"), Path("/tmp/zt740")]
+          found = []
+          for root in roots:
+              if root.exists():
+                  found += list(root.rglob("libvulkan_freedreno.so"))
+          found = [p for p in found if p.is_file() and "p/" not in str(p)]
           if not found:
               print("driver not found")
               sys.exit(1)
           driver = found[0]
           print("DRIVER", driver)
-          print(subprocess.check_output(["ls", "-lh", str(driver)], text=True))
           file_out = subprocess.check_output(["file", str(driver)], text=True)
           print(file_out)
           needed = subprocess.check_output(["readelf", "-d", str(driver)], text=True)
-          print("===== NEEDED =====")
           print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
           dyn = subprocess.check_output(["readelf", "--dyn-syms", str(driver)], text=True)
-          print("===== ICD =====")
-          print("\n".join(l for l in dyn.splitlines() if "vk_icd" in l or "vkGetInstanceProcAddr" in l))
-
-          if "Android 34" in file_out:
-              print("ERROR: built for API 34")
+          if "Android 34" in file_out or "libc++_shared.so" in needed or "vk_icdGetInstanceProcAddr" not in dyn:
+              print("verify failed")
               sys.exit(1)
-          if "libc++_shared.so" in needed:
-              print("ERROR: libc++_shared.so")
-              sys.exit(1)
-          if "vk_icdGetInstanceProcAddr" not in dyn:
-              print("ERROR: missing vk_icdGetInstanceProcAddr")
-              sys.exit(1)
-
           Path("driver_path.txt").write_text(str(driver))
           PY
 
       - name: Create package
         run: |
           python3 - << 'PY'
-          import os, subprocess, datetime
+          import datetime, zipfile
           from pathlib import Path
-          import zipfile
 
           driver = Path("driver_path.txt").read_text().strip()
           release = Path("release")
           release.mkdir(exist_ok=True)
-          dst = release / "libvulkan_freedreno.so"
-          dst.write_bytes(Path(driver).read_bytes())
-
+          so = release / "libvulkan_freedreno.so"
+          so.write_bytes(Path(driver).read_bytes())
           mesa_hash = Path("mesa_commit.txt").read_text().strip()
           date = datetime.datetime.utcnow().strftime("%Y%m%d")
           meta = release / "meta.json"
@@ -221,12 +217,11 @@ jobs:
             "libraryName": "libvulkan_freedreno.so"
           }}
           ''')
-          zip_name = f"ZT740-Optimized-{date}-{mesa_hash}.zip"
-          with zipfile.ZipFile(zip_name, "w", compression=zipfile.ZIP_DEFLATED) as z:
-              z.write(dst, "libvulkan_freedreno.so")
+          name = f"ZT740-Optimized-{date}-{mesa_hash}.zip"
+          with zipfile.ZipFile(name, "w", zipfile.ZIP_DEFLATED) as z:
+              z.write(so, "libvulkan_freedreno.so")
               z.write(meta, "meta.json")
-          print("created", zip_name)
-          subprocess.check_call(["unzip", "-l", zip_name])
+          print("created", name)
           PY
 
       - name: Upload artifact
