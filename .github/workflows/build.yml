@@ -1,4 +1,4 @@
-name: Build ZT740 BASE
+name: Build ZT740 Patched Driver
 
 on:
   workflow_dispatch:
@@ -57,15 +57,23 @@ jobs:
 
       - name: Clone Mesa
         run: |
-          git clone --depth=1 \
-            https://gitlab.freedesktop.org/mesa/mesa.git \
-            mesa
+          git clone --depth=50 https://gitlab.freedesktop.org/mesa/mesa.git mesa
 
-      - name: Show Mesa revision
+      - name: Fetch and Apply Turnip Patches
         working-directory: mesa
         run: |
-          echo "Mesa revision:"
-          git rev-parse HEAD
+          # Клонуємо репозиторій із патчами під Adreno 7xx / adrenotools
+          git clone --depth=1 https://github.com/K11OG/turnip-patches.git ../patches || true
+          
+          if [ -d "../patches" ]; then
+            echo "Applying patches..."
+            for patch in ../patches/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying $patch"
+                git apply --reject --whitespace=fix "$patch" || true
+              fi
+            done
+          fi
 
       - name: Create Android cross file
         run: |
@@ -109,12 +117,6 @@ jobs:
         run: |
           meson compile -C build-android-aarch64
 
-      - name: Find Turnip library
-        run: |
-          find mesa/build-android-aarch64 \
-            \( -name "libvulkan_freedreno.so" -o -name "libvulkan_freedesktop.so" \) \
-            -print
-
       - name: Create driver package
         run: |
           mkdir -p release
@@ -132,19 +134,18 @@ jobs:
 
           cat > release/meta.json <<EOF
           {
-            "name": "ZT740 BASE v0.1",
-            "description": "Upstream Mesa Turnip baseline for Adreno 740",
+            "name": "ZT740 Patched Turnip v24.3.0",
             "author": "blackorange-sketch",
-            "packageVersion": "0.1",
+            "version": "24.3.0",
             "vendor": "Mesa",
-            "driverVersion": "24.x",
+            "driverVersion": "24.3.0",
             "minApi": 28,
             "libraryName": "vulkan.turnip.so"
           }
           EOF
 
           cd release
-          zip -9 ../ZT740-BASE-v0.1.zip vulkan.turnip.so meta.json
+          zip -9 -r ../ZT740-BASE-v0.1.zip vulkan.turnip.so meta.json
 
       - name: Upload ZT740 driver
         uses: actions/upload-artifact@v4
