@@ -95,6 +95,7 @@ jobs:
             -Dandroid-libbacktrace=disabled \
             -Degl=disabled \
             -Dgallium-drivers= \
+            -Dlibdrm=disabled
             -Dvulkan-drivers=freedreno \
             -Dcpp_link_args="-static-libstdc++"
             -Dfreedreno-kmds=kgsl
