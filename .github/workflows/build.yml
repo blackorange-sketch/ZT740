@@ -113,20 +113,26 @@ jobs:
           if not clang.is_file():
               raise SystemExit("clang not found")
 
+          exports = [
+              "vkGetInstanceProcAddr",
+              "vk_icdGetInstanceProcAddr",
+              "vk_icdNegotiateLoaderICDInterfaceVersion",
+              "vk_icdGetPhysicalDeviceProcAddr",
+          ]
+          exp_flags = ", ".join(f"'-Wl,--export-dynamic-symbol={s}'" for s in exports)
+
           Path("android-aarch64.txt").write_text(f"""
           [binaries]
           ar = '{toolchain}/bin/llvm-ar'
           c = ['ccache', '{clang}']
           cpp = ['ccache', '{clangxx}']
           strip = '{toolchain}/bin/llvm-strip'
-          c_ld = 'lld'
-          cpp_ld = 'lld'
 
           [built-in options]
-          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-fvisibility=default']
-          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-fvisibility=default']
-          c_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', '-Wl,--export-dynamic']
-          cpp_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', '-Wl,--export-dynamic']
+          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fvisibility=default']
+          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fvisibility=default']
+          c_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', {exp_flags}]
+          cpp_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', {exp_flags}]
 
           [host_machine]
           system = 'android'
@@ -173,17 +179,23 @@ jobs:
       - name: Build Turnip
         working-directory: mesa
         run: |
-          meson compile -C build-android-aarch64 --list | grep -i vulkan || true
-          meson compile -C build-android-aarch64 vulkan_freedreno || meson compile -C build-android-aarch64
+          meson compile -C build-android-aarch64
+          meson install -C build-android-aarch64
           ccache -s
 
       - name: Locate and verify driver
         run: |
           python3 - << 'PY'
-          import subprocess, sys
+          import os, subprocess, sys
           from pathlib import Path
 
-          roots = [Path("mesa/build-android-aarch64"), Path("/tmp/zt740")]
+          ndk_nm = (
+              Path(os.environ["ANDROID_HOME"])
+              / "ndk" / os.environ["NDK_VERSION"]
+              / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          )
+
+          roots = [Path("/tmp/zt740"), Path("mesa/build-android-aarch64")]
           found = []
           for root in roots:
               if root.exists():
@@ -203,18 +215,15 @@ jobs:
           print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
 
           dyn = subprocess.check_output(["readelf", "--dyn-syms", "-W", str(driver)], text=True)
-          print("===== DYNSYM vk =====")
-          vk_dyn = "\n".join(l for l in dyn.splitlines() if "vk" in l.lower())
-          print(vk_dyn[:5000] if vk_dyn else "(empty)")
+          print("===== DYNSYM ICD =====")
+          for l in dyn.splitlines():
+              if any(s in l for s in ("vkGetInstanceProcAddr", "vk_icd", "GetInstanceProcAddr")):
+                  print(l)
 
-          nm = subprocess.check_output(
-              ["llvm-nm", "-D", "--defined-only", str(driver)],
-              text=True,
-              stderr=subprocess.STDOUT,
-          )
-          print("===== NM -D vk =====")
-          vk_nm = "\n".join(l for l in nm.splitlines() if "vk" in l.lower())
-          print(vk_nm[:5000] if vk_nm else "(empty)")
+          nm = subprocess.check_output([str(ndk_nm), str(driver)], text=True, stderr=subprocess.STDOUT)
+          print("===== SYMTAB ICD =====")
+          hits = [l for l in nm.splitlines() if "GetInstanceProcAddr" in l or "vk_icd" in l]
+          print("\n".join(hits[:40]) if hits else "(none)")
 
           if "Android 34" in file_out:
               print("ERROR: API 34")
