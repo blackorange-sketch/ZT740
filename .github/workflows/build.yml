@@ -98,26 +98,23 @@ jobs:
 
           NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
           TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
-          CLANG="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang"
-          CLANGXX="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang++"
+
+          # Важливо: формуємо шляхи через printf, щоб уникнути проблем з екрануванням
+          CLANG=$(printf "%s/bin/aarch64-linux-android%s-clang" "$TOOLCHAIN" "$ANDROID_API")
+          CLANGXX=$(printf "%s/bin/aarch64-linux-android%s-clang++" "$TOOLCHAIN" "$ANDROID_API")
 
           echo "NDK_PATH  = $NDK_PATH"
           echo "TOOLCHAIN = $TOOLCHAIN"
           echo "CLANG     = $CLANG"
           echo "CLANGXX   = $CLANGXX"
 
-          if [ ! -d "$TOOLCHAIN" ]; then
-            echo "ERROR: TOOLCHAIN directory not found!"
-            ls -la "$ANDROID_HOME/ndk/" || true
-            exit 1
-          fi
-
           if [ ! -f "$CLANG" ]; then
-            echo "ERROR: Clang not found!"
-            ls -la "$TOOLCHAIN/bin/" | head -40
+            echo "ERROR: Clang not found at $CLANG"
+            ls -la "$TOOLCHAIN/bin/" | grep aarch64-linux-android34 || true
             exit 1
           fi
 
+          # Створюємо cross-файл
           cat > android-aarch64.txt << EOF
           [binaries]
           ar = '$TOOLCHAIN/bin/llvm-ar'
@@ -142,6 +139,7 @@ jobs:
 
           echo "===== Cross file ====="
           cat android-aarch64.txt
+
 
       - name: Configure Mesa
         working-directory: mesa
