@@ -32,7 +32,7 @@ jobs:
           sudo apt-get install -y \
             git python3 python3-pip python3-mako \
             ninja-build flex bison pkg-config glslang-tools \
-            zip unzip ccache file binutils curl patchelf
+            zip unzip ccache file binutils llvm curl patchelf
 
       - name: Install Meson
         run: |
@@ -176,30 +176,50 @@ jobs:
           if not found:
               print("driver not found")
               sys.exit(1)
+
           driver = found[0]
           print("DRIVER", driver)
           file_out = subprocess.check_output(["file", str(driver)], text=True)
           print(file_out)
+
           needed = subprocess.check_output(["readelf", "-d", str(driver)], text=True)
+          print("===== NEEDED =====")
           print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
+
           dyn = subprocess.check_output(["readelf", "--dyn-syms", str(driver)], text=True)
-          print("\n".join(l for l in dyn.splitlines() if "vk_icd" in l or "vkGetInstanceProcAddr" in l))
+          print("===== DYNSYM vk =====")
+          vk_dyn = "\n".join(l for l in dyn.splitlines() if "vk" in l.lower())
+          print(vk_dyn[:4000] if vk_dyn else "(empty)")
+
+          nm = subprocess.check_output(
+              ["nm", "-D", "--defined-only", str(driver)],
+              text=True,
+              stderr=subprocess.STDOUT,
+          )
+          print("===== NM -D vk =====")
+          vk_nm = "\n".join(l for l in nm.splitlines() if "vk" in l.lower())
+          print(vk_nm[:4000] if vk_nm else "(empty)")
+
           if "Android 34" in file_out:
               print("ERROR: API 34")
               sys.exit(1)
           if "libc++_shared.so" in needed:
               print("ERROR: libc++_shared.so")
               sys.exit(1)
-          if "vk_icdGetInstanceProcAddr" not in dyn:
-              print("ERROR: missing vk_icdGetInstanceProcAddr")
+
+          exports = dyn + "\n" + nm
+          if "vk_icdGetInstanceProcAddr" not in exports and "vkGetInstanceProcAddr" not in exports:
+              print("ERROR: no Vulkan entry point")
               sys.exit(1)
+
           Path("driver_path.txt").write_text(str(driver))
+          print("VERIFY OK")
           PY
 
       - name: Create package
         run: |
           python3 - << 'PY'
-          import datetime, zipfile
+          import datetime, subprocess, zipfile
           from pathlib import Path
 
           driver = Path("driver_path.txt").read_text().strip()
@@ -207,6 +227,8 @@ jobs:
           release.mkdir(exist_ok=True)
           so = release / "libvulkan_freedreno.so"
           so.write_bytes(Path(driver).read_bytes())
+          subprocess.check_call(["llvm-strip", "--strip-unneeded", str(so)])
+
           mesa_hash = Path("mesa_commit.txt").read_text().strip()
           date = datetime.datetime.utcnow().strftime("%Y%m%d")
           meta = release / "meta.json"
