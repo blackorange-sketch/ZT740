@@ -96,6 +96,7 @@ jobs:
             -Degl=disabled \
             -Dgallium-drivers= \
             -Dvulkan-drivers=freedreno \
+            -Dcpp_link_args="-static-libstdc++"
             -Dfreedreno-kmds=kgsl
 
       - name: Build Turnip
