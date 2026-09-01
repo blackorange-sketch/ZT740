@@ -81,6 +81,22 @@ jobs:
           fi
           cat ../mesa_commit.txt
 
+      - name: Patch symbol visibility
+        run: |
+          python3 - << 'PY'
+          from pathlib import Path
+          n = 0
+          for p in Path("mesa").rglob("meson.build"):
+              t = p.read_text(encoding="utf-8", errors="ignore")
+              nt = t.replace("gnu_symbol_visibility : 'hidden'", "gnu_symbol_visibility : 'default'")
+              nt = nt.replace("gnu_symbol_visibility: 'hidden'", "gnu_symbol_visibility: 'default'")
+              if nt != t:
+                  p.write_text(nt, encoding="utf-8")
+                  n += 1
+                  print("patched", p)
+          print("files patched", n)
+          PY
+
       - name: Create Android cross file
         run: |
           python3 - << 'PY'
@@ -107,10 +123,10 @@ jobs:
           cpp_ld = 'lld'
 
           [built-in options]
-          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt']
-          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt']
-          c_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384']
-          cpp_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384']
+          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-fvisibility=default']
+          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-fvisibility=default']
+          c_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', '-Wl,--export-dynamic']
+          cpp_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384', '-Wl,--export-dynamic']
 
           [host_machine]
           system = 'android'
@@ -186,19 +202,19 @@ jobs:
           print("===== NEEDED =====")
           print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
 
-          dyn = subprocess.check_output(["readelf", "--dyn-syms", str(driver)], text=True)
+          dyn = subprocess.check_output(["readelf", "--dyn-syms", "-W", str(driver)], text=True)
           print("===== DYNSYM vk =====")
           vk_dyn = "\n".join(l for l in dyn.splitlines() if "vk" in l.lower())
-          print(vk_dyn[:4000] if vk_dyn else "(empty)")
+          print(vk_dyn[:5000] if vk_dyn else "(empty)")
 
           nm = subprocess.check_output(
-              ["nm", "-D", "--defined-only", str(driver)],
+              ["llvm-nm", "-D", "--defined-only", str(driver)],
               text=True,
               stderr=subprocess.STDOUT,
           )
           print("===== NM -D vk =====")
           vk_nm = "\n".join(l for l in nm.splitlines() if "vk" in l.lower())
-          print(vk_nm[:4000] if vk_nm else "(empty)")
+          print(vk_nm[:5000] if vk_nm else "(empty)")
 
           if "Android 34" in file_out:
               print("ERROR: API 34")
