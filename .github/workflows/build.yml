@@ -45,7 +45,7 @@ jobs:
       - name: Install Meson
         run: |
           python3 -m pip install --user --upgrade meson
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
           meson --version
 
       - name: Setup Android SDK
@@ -53,7 +53,7 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          sdkmanager "ndk;${NDK_VERSION}"
+          sdkmanager "ndk;${{ env.NDK_VERSION }}"
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -70,28 +70,30 @@ jobs:
 
       - name: Create Android cross file
         run: |
-          NDK="\( ANDROID_HOME/ndk/ \){NDK_VERSION}"
-          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
-          CLANG="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang"
-          CLANGXX="\( TOOLCHAIN/bin/aarch64-linux-android \){ANDROID_API}-clang++"
+          NDK_PATH="\( {ANDROID_HOME}/ndk/ \){NDK_VERSION}"
+          TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64"
+          CLANG="\( {TOOLCHAIN}/bin/aarch64-linux-android \){ANDROID_API}-clang"
+          CLANGXX="\( {TOOLCHAIN}/bin/aarch64-linux-android \){ANDROID_API}-clang++"
 
-          echo "Using clang: $CLANG"
-          echo "Using clang++: $CLANGXX"
+          echo "NDK_PATH = $NDK_PATH"
+          echo "TOOLCHAIN = $TOOLCHAIN"
+          echo "CLANG     = $CLANG"
+          echo "CLANGXX   = $CLANGXX"
 
           if [ ! -f "$CLANG" ]; then
             echo "ERROR: Clang not found!"
-            ls -la "$TOOLCHAIN/bin/" | head -30
+            ls -la "${TOOLCHAIN}/bin/" | head -40 || true
             exit 1
           fi
 
-          cat > android-aarch64.txt << EOF
+          cat > android-aarch64.txt << 'CROSSFILE'
           [binaries]
-          ar = '$TOOLCHAIN/bin/llvm-ar'
-          c = ['ccache', '$CLANG']
-          cpp = ['ccache', '$CLANGXX']
-          strip = '$TOOLCHAIN/bin/llvm-strip'
-          c_ld = '$TOOLCHAIN/bin/ld.lld'
-          cpp_ld = '$TOOLCHAIN/bin/ld.lld'
+          ar = 'TOOLCHAIN/bin/llvm-ar'
+          c = ['ccache', 'CLANG']
+          cpp = ['ccache', 'CLANGXX']
+          strip = 'TOOLCHAIN/bin/llvm-strip'
+          c_ld = 'TOOLCHAIN/bin/ld.lld'
+          cpp_ld = 'TOOLCHAIN/bin/ld.lld'
 
           [built-in options]
           c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-flto=thin']
@@ -104,9 +106,14 @@ jobs:
           cpu_family = 'aarch64'
           cpu = 'armv8'
           endian = 'little'
-          EOF
+          CROSSFILE
 
-          echo "===== Cross file ====="
+          # Підставляємо реальні шляхи
+          sed -i "s|TOOLCHAIN|${TOOLCHAIN}|g" android-aarch64.txt
+          sed -i "s|CLANG|${CLANG}|g" android-aarch64.txt
+          sed -i "s|CLANGXX|${CLANGXX}|g" android-aarch64.txt
+
+          echo "===== Final cross file ====="
           cat android-aarch64.txt
 
       - name: Configure Mesa
@@ -179,11 +186,9 @@ jobs:
           EOF
 
           cd release
-          zip -9 ../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip \
-            libvulkan_freedreno.so \
-            meta.json
+          zip -9 ../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip libvulkan_freedreno.so meta.json
 
-          echo "===== Package created ====="
+          echo "===== Package ====="
           ls -lh ../ZT740-Optimized-*.zip
           unzip -l ../ZT740-Optimized-*.zip
 
