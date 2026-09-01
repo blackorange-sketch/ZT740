@@ -21,9 +21,6 @@ jobs:
     env:
       ANDROID_API: "28"
       NDK_VERSION: "29.0.14206865"
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 4G
-      CCACHE_COMPILERCHECK: content
 
     steps:
       - name: Checkout
@@ -157,10 +154,11 @@ jobs:
             -Dbuild-tests=false \
             -Dtools=
 
-      - name: Build Turnip only
+      - name: Build Turnip
         working-directory: mesa
         run: |
-          meson compile -C build-android-aarch64 src/freedreno/vulkan/libvulkan_freedreno.so
+          meson compile -C build-android-aarch64 --list | grep -i vulkan || true
+          meson compile -C build-android-aarch64 vulkan_freedreno || meson compile -C build-android-aarch64
           ccache -s
 
       - name: Locate and verify driver
@@ -173,8 +171,8 @@ jobs:
           found = []
           for root in roots:
               if root.exists():
-                  found += list(root.rglob("libvulkan_freedreno.so"))
-          found = [p for p in found if p.is_file() and "p/" not in str(p)]
+                  found += [p for p in root.rglob("libvulkan_freedreno.so") if p.is_file()]
+          found = [p for p in found if ".p" not in p.parts]
           if not found:
               print("driver not found")
               sys.exit(1)
@@ -185,8 +183,15 @@ jobs:
           needed = subprocess.check_output(["readelf", "-d", str(driver)], text=True)
           print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
           dyn = subprocess.check_output(["readelf", "--dyn-syms", str(driver)], text=True)
-          if "Android 34" in file_out or "libc++_shared.so" in needed or "vk_icdGetInstanceProcAddr" not in dyn:
-              print("verify failed")
+          print("\n".join(l for l in dyn.splitlines() if "vk_icd" in l or "vkGetInstanceProcAddr" in l))
+          if "Android 34" in file_out:
+              print("ERROR: API 34")
+              sys.exit(1)
+          if "libc++_shared.so" in needed:
+              print("ERROR: libc++_shared.so")
+              sys.exit(1)
+          if "vk_icdGetInstanceProcAddr" not in dyn:
+              print("ERROR: missing vk_icdGetInstanceProcAddr")
               sys.exit(1)
           Path("driver_path.txt").write_text(str(driver))
           PY
