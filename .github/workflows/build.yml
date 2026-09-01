@@ -30,7 +30,6 @@ jobs:
             git \
             python3 \
             python3-mako \
-            meson \
             ninja-build \
             flex \
             bison \
@@ -41,7 +40,11 @@ jobs:
             ccache \
             clang \
             lld
-
+      - name: Install latest Meson
+        run: |
+          python3 -m pip install --user --upgrade meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          meson --version
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
