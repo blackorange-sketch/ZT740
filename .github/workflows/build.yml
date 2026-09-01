@@ -1,4 +1,4 @@
-name: Build ZT740 BASE
+name: Build ZT740 Turnip
 
 on:
   workflow_dispatch:
@@ -20,12 +20,13 @@ jobs:
 
     steps:
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             python3 \
@@ -39,15 +40,16 @@ jobs:
             zip \
             unzip \
             ccache \
+            clang \
+            lld \
             patchelf \
             file \
             binutils
 
-      - name: Install current Meson
+      - name: Install Meson
         run: |
           python3 -m pip install --user --upgrade meson
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/meson" --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -60,129 +62,194 @@ jobs:
         run: |
           git clone \
             --depth=1 \
+            -b main \
             https://gitlab.freedesktop.org/mesa/mesa.git \
             mesa
 
           cd mesa
 
-          echo "Mesa commit:"
+          echo "MESA COMMIT:"
           git rev-parse HEAD
 
-          echo "Mesa describe:"
-          git describe --always || true
-
-      - name: Create Android cross file
+      - name: Setup NDK toolchain
         run: |
+
           NDK="$ANDROID_HOME/ndk/${NDK_VERSION}"
+
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+
+          echo "$TOOLCHAIN/bin" >> "$GITHUB_PATH"
+
+          echo "CC=$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang" >> "$GITHUB_ENV"
+
+          echo "CXX=$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++" >> "$GITHUB_ENV"
+
+          echo "AR=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
+
+          echo "RANLIB=$TOOLCHAIN/bin/llvm-ranlib" >> "$GITHUB_ENV"
+
+          echo "STRIP=$TOOLCHAIN/bin/llvm-strip" >> "$GITHUB_ENV"
+
+          echo "OBJDUMP=$TOOLCHAIN/bin/llvm-objdump" >> "$GITHUB_ENV"
+
+          echo "OBJCOPY=$TOOLCHAIN/bin/llvm-objcopy" >> "$GITHUB_ENV"
+
+          echo "LDFLAGS=-fuse-ld=lld" >> "$GITHUB_ENV"
+
+      - name: Create cross file
+        run: |
+
+          NDK="$ANDROID_HOME/ndk/${NDK_VERSION}"
+
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 
           cat > android-aarch64.txt <<EOF
+
           [binaries]
+
           ar = '$TOOLCHAIN/bin/llvm-ar'
-          c = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang'
-          cpp = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++'
+
+          c = ['ccache', '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang']
+
+          cpp = [
+            'ccache',
+            '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++',
+            '-fno-exceptions',
+            '-fno-unwind-tables',
+            '-fno-asynchronous-unwind-tables',
+            '--start-no-unused-arguments',
+            '-static-libstdc++',
+            '--end-no-unused-arguments'
+          ]
+
           c_ld = '$TOOLCHAIN/bin/ld.lld'
+
           cpp_ld = '$TOOLCHAIN/bin/ld.lld'
+
           strip = '$TOOLCHAIN/bin/llvm-strip'
 
+          pkg-config = [
+            'env',
+            'PKG_CONFIG_LIBDIR=$TOOLCHAIN/pkg-config',
+            '/usr/bin/pkg-config'
+          ]
+
           [host_machine]
+
           system = 'android'
+
           cpu_family = 'aarch64'
+
           cpu = 'armv8'
+
           endian = 'little'
+
           EOF
 
       - name: Create native file
         run: |
+
           cat > native.txt <<EOF
+
           [binaries]
-          c = 'clang'
-          cpp = 'clang++'
+
+          c = ['ccache', 'clang']
+
+          cpp = ['ccache', 'clang++']
+
           ar = 'llvm-ar'
+
           strip = 'llvm-strip'
+
           c_ld = 'ld.lld'
+
           cpp_ld = 'ld.lld'
 
           [build_machine]
+
           system = 'linux'
+
           cpu_family = 'x86_64'
+
           cpu = 'x86_64'
+
           endian = 'little'
+
           EOF
 
-      - name: Configure Mesa Turnip
+      - name: Configure Mesa
         working-directory: mesa
+
         run: |
+
           meson setup build-android-aarch64 \
             --cross-file ../android-aarch64.txt \
             --native-file ../native.txt \
-            --prefix /tmp/zt740-install \
+            --prefix /tmp/zt740 \
             -Dbuildtype=release \
             -Dstrip=true \
             -Dplatforms=android \
             -Dvideo-codecs= \
             -Dplatform-sdk-version=${ANDROID_API} \
             -Dandroid-stub=true \
-            -Dandroid-libbacktrace=disabled \
             -Dgallium-drivers= \
             -Dvulkan-drivers=freedreno \
+            -Dvulkan-beta=true \
             -Dfreedreno-kmds=kgsl \
-            -Degl=disabled
+            -Degl=disabled \
+            -Dandroid-libbacktrace=disabled
 
-      - name: Build and install Turnip
+      - name: Build Turnip
         working-directory: mesa
-        run: |
-          ninja -C build-android-aarch64 install
 
-      - name: Locate driver
         run: |
-          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
+
+          ninja \
+            -C build-android-aarch64 \
+            install
+
+      - name: Verify driver
+        run: |
+
+          DRIVER="/tmp/zt740/lib/libvulkan_freedreno.so"
 
           if [ ! -f "$DRIVER" ]; then
-            echo "ERROR: Driver not found"
 
-            echo "Searching:"
-            find /tmp/zt740-install -type f || true
-            find mesa/build-android-aarch64 \
-              -name "libvulkan_freedreno.so" \
-              -print || true
+            echo "DRIVER NOT FOUND"
+
+            find /tmp/zt740 -type f || true
 
             exit 1
+
           fi
 
-          echo "Driver found:"
+          echo "===== DRIVER ====="
+
           ls -lh "$DRIVER"
 
-      - name: Inspect ELF
-        run: |
-          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
-
           echo "===== FILE ====="
+
           file "$DRIVER"
 
-          echo "===== ELF HEADER ====="
+          echo "===== ELF ====="
+
           readelf -h "$DRIVER"
 
           echo "===== SONAME ====="
+
           readelf -d "$DRIVER" | grep SONAME || true
 
-          echo "===== NEEDED LIBRARIES ====="
+          echo "===== NEEDED ====="
+
           readelf -d "$DRIVER" | grep NEEDED || true
 
-          echo "===== UNDEFINED SYMBOLS ====="
-          readelf -Ws "$DRIVER" \
-            | grep UND \
-            | head -n 100 \
-            || true
-
-      - name: Create AdrenoTools driver package
+      - name: Create driver package
         run: |
+
           mkdir -p release
 
-          DRIVER="/tmp/zt740-install/lib/libvulkan_freedreno.so"
-
           cp \
-            "$DRIVER" \
+            /tmp/zt740/lib/libvulkan_freedreno.so \
             release/libvulkan_freedreno.so
 
           MESA_HASH=$(cd mesa && git rev-parse --short HEAD)
@@ -190,12 +257,12 @@ jobs:
           cat > release/meta.json <<EOF
           {
             "schemaVersion": 1,
-            "name": "ZT740 BASE v0.2",
-            "description": "Upstream Mesa Turnip baseline for Snapdragon 8 Gen 2 / Adreno 740",
+            "name": "ZT740 BASE v0.3",
+            "description": "Upstream Mesa Turnip for Snapdragon 8 Gen 2 / Adreno 740",
             "author": "blackorange-sketch",
-            "packageVersion": "2",
+            "packageVersion": "3",
             "vendor": "Mesa",
-            "driverVersion": "Mesa-git-${MESA_HASH}",
+            "driverVersion": "Mesa-${MESA_HASH}",
             "minApi": 28,
             "libraryName": "libvulkan_freedreno.so"
           }
@@ -204,17 +271,19 @@ jobs:
           cd release
 
           zip -9 \
-            ../ZT740-BASE-v0.2.zip \
+            ../ZT740-BASE-v0.3.zip \
             libvulkan_freedreno.so \
             meta.json
 
-      - name: Verify ZIP contents
+      - name: Verify package
         run: |
-          unzip -l ZT740-BASE-v0.2.zip
 
-      - name: Upload ZT740 BASE
+          unzip -l ZT740-BASE-v0.3.zip
+
+      - name: Upload driver
         uses: actions/upload-artifact@v4
+
         with:
-          name: ZT740-BASE-v0.2
-          path: ZT740-BASE-v0.2.zip
+          name: ZT740-BASE-v0.3
+          path: ZT740-BASE-v0.3.zip
           if-no-files-found: error
