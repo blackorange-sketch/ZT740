@@ -1,4 +1,4 @@
-name: Build ZT740 Turnip (Optimized)
+name: Build ZT740 Turnip (Eden)
 
 on:
   workflow_dispatch:
@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
-      ANDROID_API: "34"
+      ANDROID_API: "28"
       NDK_VERSION: "29.0.14206865"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -41,20 +41,20 @@ jobs:
             file \
             binutils \
             llvm \
-            curl
+            curl \
+            patchelf
 
       - name: Install Meson
         run: |
           python3 -m pip install --user --upgrade meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           meson --version
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android NDK
-        run: |
-          sdkmanager "ndk;${{ env.NDK_VERSION }}"
+        run: sdkmanager "ndk;${{ env.NDK_VERSION }}"
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -65,13 +65,11 @@ jobs:
       - name: Clone Mesa
         run: |
           set -e
-          echo "Trying to clone Mesa from gitlab.freedesktop.org..."
-          
           if git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git mesa; then
-            echo "Clone successful"
+            echo "Clone OK"
           else
-            echo "GitLab is down, downloading archive instead..."
-            curl -L --retry 3 --retry-delay 5 -o mesa-main.tar.gz \
+            echo "GitLab down, using archive"
+            curl -L --retry 5 --retry-delay 5 -o mesa-main.tar.gz \
               "https://gitlab.freedesktop.org/mesa/mesa/-/archive/main/mesa-main.tar.gz"
             mkdir mesa
             tar -xzf mesa-main.tar.gz --strip-components=1 -C mesa
@@ -80,66 +78,50 @@ jobs:
 
           cd mesa
           if [ -d .git ]; then
-            echo "Mesa commit: $(git rev-parse --short HEAD)"
-            git rev-parse --short HEAD > ../mesa_commit.txt
+            git rev-parse --short HEAD | tee ../mesa_commit.txt
           else
-            echo "Using archive (no git history)"
             echo "archive" > ../mesa_commit.txt
           fi
 
       - name: Create Android cross file
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "=== DEBUG ==="
-          echo "ANDROID_HOME = $ANDROID_HOME"
-          echo "NDK_VERSION  = $NDK_VERSION"
-          echo "ANDROID_API  = $ANDROID_API"
+          NDK_PATH="\( {ANDROID_HOME}/ndk/ \){NDK_VERSION}"
+          TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64"
+          CLANG="\( {TOOLCHAIN}/bin/aarch64-linux-android \){{ env.ANDROID_API }}-clang"
+          CLANGXX="\( {TOOLCHAIN}/bin/aarch64-linux-android \){{ env.ANDROID_API }}-clang++"
 
-          NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
-          TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "NDK_PATH=$NDK_PATH"
+          echo "CLANG=$CLANG"
 
-          # Важливо: формуємо шляхи через printf, щоб уникнути проблем з екрануванням
-          CLANG=$(printf "%s/bin/aarch64-linux-android%s-clang" "$TOOLCHAIN" "$ANDROID_API")
-          CLANGXX=$(printf "%s/bin/aarch64-linux-android%s-clang++" "$TOOLCHAIN" "$ANDROID_API")
+          test -f "$CLANG"
+          test -f "$CLANGXX"
 
-          echo "NDK_PATH  = $NDK_PATH"
-          echo "TOOLCHAIN = $TOOLCHAIN"
-          echo "CLANG     = $CLANG"
-          echo "CLANGXX   = $CLANGXX"
-
-          if [ ! -f "$CLANG" ]; then
-            echo "ERROR: Clang not found at $CLANG"
-            ls -la "$TOOLCHAIN/bin/" | grep aarch64-linux-android34 || true
-            exit 1
-          fi
-
-          # Створюємо cross-файл
           cat > android-aarch64.txt << EOF
           [binaries]
-          ar = '$TOOLCHAIN/bin/llvm-ar'
-          c = ['ccache', '$CLANG']
-          cpp = ['ccache', '$CLANGXX']
-          strip = '$TOOLCHAIN/bin/llvm-strip'
-          c_ld = '$TOOLCHAIN/bin/ld.lld'
-          cpp_ld = '$TOOLCHAIN/bin/ld.lld'
+          ar = '${TOOLCHAIN}/bin/llvm-ar'
+          c = ['ccache', '${CLANG}']
+          cpp = ['ccache', '${CLANGXX}']
+          strip = '${TOOLCHAIN}/bin/llvm-strip'
+          c_ld = 'lld'
+          cpp_ld = 'lld'
 
           [built-in options]
-          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-flto=thin']
-          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt', '-flto=thin']
-          c_link_args = ['-fuse-ld=lld', '-flto=thin']
-          cpp_link_args = ['-fuse-ld=lld', '-flto=thin']
+          c_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt']
+          cpp_args = ['-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fomit-frame-pointer', '-fno-plt']
+          c_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384']
+          cpp_link_args = ['-fuse-ld=lld', '-static-libstdc++', '-Wl,-z,max-page-size=16384']
 
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
-          cpu = 'armv8'
+          cpu = 'aarch64'
           endian = 'little'
           EOF
 
-          echo "===== Cross file ====="
           cat android-aarch64.txt
-
 
       - name: Configure Mesa
         working-directory: mesa
@@ -149,9 +131,10 @@ jobs:
             --prefix /tmp/zt740 \
             -Dbuildtype=release \
             -Db_ndebug=true \
+            -Db_lto=false \
             -Dstrip=true \
             -Dplatforms=android \
-            -Dplatform-sdk-version=${ANDROID_API} \
+            -Dplatform-sdk-version=${{ env.ANDROID_API }} \
             -Dandroid-stub=true \
             -Dandroid-libbacktrace=disabled \
             -Dgallium-drivers= \
@@ -159,8 +142,16 @@ jobs:
             -Dvulkan-beta=true \
             -Dfreedreno-kmds=kgsl \
             -Degl=disabled \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
             -Dgbm=disabled \
             -Dglx=disabled \
+            -Dllvm=disabled \
+            -Dxmlconfig=disabled \
+            -Dlibunwind=disabled \
+            -Dlmsensors=disabled \
+            -Dmicrosoft-clc=disabled \
+            -Dvalgrind=disabled \
             -Dvideo-codecs= \
             -Dbuild-tests=false \
             -Dtools=
@@ -168,33 +159,53 @@ jobs:
       - name: Build Turnip
         working-directory: mesa
         run: |
-          meson compile -C build-android-aarch64 -j$(nproc)
+          meson compile -C build-android-aarch64 -j"$(nproc)"
           meson install -C build-android-aarch64
 
-      - name: Locate driver
+      - name: Locate and verify driver
         id: locate
         run: |
-          DRIVER=$(find /tmp/zt740 -name "libvulkan_freedreno.so" -type f | head -n 1)
+          set -euo pipefail
 
-          if [ -z "$DRIVER" ]; then
-            echo "Driver not found!"
-            echo "Contents of /tmp/zt740:"
-            find /tmp/zt740 -type f || true
-            exit 1
-          fi
+          DRIVER="$(find /tmp/zt740 -name 'libvulkan_freedreno.so' -type f | head -n 1)"
+          test -n "$DRIVER"
 
-          echo "Found driver: $DRIVER"
-          echo "driver_path=$DRIVER" >> $GITHUB_OUTPUT
+          echo "Found: $DRIVER"
           ls -lh "$DRIVER"
           file "$DRIVER"
 
+          echo "===== NEEDED ====="
+          readelf -d "$DRIVER" | grep NEEDED || true
+
+          echo "===== ICD SYMBOLS ====="
+          readelf --dyn-syms "$DRIVER" | grep -E "vk_icd|vkGetInstanceProcAddr" || true
+
+          if file "$DRIVER" | grep -q "Android 34"; then
+            echo "ERROR: still built for API 34"
+            exit 1
+          fi
+
+          if readelf -d "$DRIVER" | grep NEEDED | grep -q "libc++_shared.so"; then
+            echo "ERROR: dynamic libc++_shared.so (will not load in Eden)"
+            exit 1
+          fi
+
+          if ! readelf --dyn-syms "$DRIVER" | grep -q "vk_icdGetInstanceProcAddr"; then
+            echo "ERROR: missing vk_icdGetInstanceProcAddr"
+            exit 1
+          fi
+
+          echo "driver_path=$DRIVER" >> "$GITHUB_OUTPUT"
+
       - name: Create package
         run: |
+          set -euo pipefail
+
           mkdir -p release
           cp "${{ steps.locate.outputs.driver_path }}" release/libvulkan_freedreno.so
 
-          MESA_HASH=$(cat mesa_commit.txt)
-          DATE=$(date -u +%Y%m%d)
+          MESA_HASH="$(cat mesa_commit.txt)"
+          DATE="$(date -u +%Y%m%d)"
 
           cat > release/meta.json << EOF
           {
@@ -211,16 +222,15 @@ jobs:
           EOF
 
           cd release
-          zip -9 ../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip \
+          zip -9 "../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip" \
             libvulkan_freedreno.so \
             meta.json
 
-          echo "===== Package created ====="
+          unzip -l "../ZT740-Optimized-\( {DATE}- \){MESA_HASH}.zip"
           ls -lh ../ZT740-Optimized-*.zip
-          unzip -l ../ZT740-Optimized-*.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ZT740-Optimized
           path: ZT740-Optimized-*.zip
