@@ -75,8 +75,8 @@ jobs:
           cat > android-aarch64.txt <<EOF
           [binaries]
           ar = '$TOOLCHAIN/bin/llvm-ar'
-          c = ['$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang', '-stl=c++_static']
-          cpp = ['$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++', '-stl=c++_static']
+          c = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang'
+          cpp = '$TOOLCHAIN/bin/aarch64-linux-android${ANDROID_API}-clang++'
           strip = '$TOOLCHAIN/bin/llvm-strip'
           pkg-config = 'false'
 
@@ -101,6 +101,7 @@ jobs:
             -Dgallium-drivers= \
             -Dvulkan-drivers=freedreno \
             -Dfreedreno-kmds=kgsl \
+            -Dc_link_args="-static-libgcc" \
             -Dcpp_link_args="-static-libstdc++ -static-libgcc"
 
       - name: Build Turnip
