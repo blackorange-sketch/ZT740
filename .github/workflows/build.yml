@@ -1,237 +1,38 @@
-name: Build ZT740 Turnip (Eden)
+name: Build Turnip Clean 
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
-concurrency:
-  group: zt740-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
-    name: Build Turnip ARM64 (ZT740)
-    runs-on: ubuntu-24.04
-
-    env:
-      ANDROID_API: "28"
-      NDK_VERSION: "29.0.14206865"
-
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git python3 python3-pip python3-mako \
-            ninja-build flex bison pkg-config glslang-tools \
-            zip unzip ccache file binutils llvm curl patchelf clang
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
+          pip3 install --break-system-packages meson mako
 
-      - name: Install Meson
+      - name: Build
         run: |
-          python3 -m pip install --user --upgrade meson
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          chmod +x build_turnip.sh
+          ./build_turnip.sh
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Cache NDK
-        id: ndk-cache
-        uses: actions/cache@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: \( {{ env.ANDROID_HOME }}/ndk/ \){{ env.NDK_VERSION }}
-          key: ndk-${{ env.NDK_VERSION }}
+          name: Turnip-Driver
+          path: turnip_workdir/*.zip
 
-      - name: Install Android NDK
-        if: steps.ndk-cache.outputs.cache-hit != 'true'
-        run: sdkmanager "ndk;$NDK_VERSION"
-
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
-          key: turnip-zt740
-          restore-keys: turnip-zt740
-          max-size: 4G
-          save: true
-
-      - name: Clone Mesa
-        run: |
-          set -e
-          if git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git mesa; then
-            echo Clone OK
-          else
-            curl -L --retry 5 --retry-delay 5 -o mesa-main.tar.gz \
-              "https://gitlab.freedesktop.org/mesa/mesa/-/archive/main/mesa-main.tar.gz"
-            mkdir mesa
-            tar -xzf mesa-main.tar.gz --strip-components=1 -C mesa
-            rm -f mesa-main.tar.gz
-          fi
-          cd mesa
-          if [ -d .git ]; then
-            git rev-parse --short HEAD > ../mesa_commit.txt
-          else
-            echo archive > ../mesa_commit.txt
-          fi
-          cat ../mesa_commit.txt
-
-      - name: Create meson files
-        run: |
-          python3 - << 'PY'
-          import os
-          from pathlib import Path
-
-          api = os.environ["ANDROID_API"]
-          ndk_ver = os.environ["NDK_VERSION"]
-          android_home = os.environ["ANDROID_HOME"]
-          ndk_bin = Path(android_home) / "ndk" / ndk_ver / "toolchains/llvm/prebuilt/linux-x86_64/bin"
-          clang = ndk_bin / f"aarch64-linux-android{api}-clang"
-          clangxx = ndk_bin / f"aarch64-linux-android{api}-clang++"
-          print("CLANG", clang)
-          if not clang.is_file():
-              raise SystemExit("clang not found")
-
-          Path("android-aarch64.txt").write_text(f"""
-          [binaries]
-          ar = '{ndk_bin}/llvm-ar'
-          c = ['ccache', '{clang}', '-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a']
-          cpp = ['ccache', '{clangxx}', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments', '-O3', '-mcpu=cortex-x3', '-mtune=cortex-x3', '-march=armv8.5-a', '-fno-exceptions', '-fno-unwind-tables']
-          c_ld = '{ndk_bin}/ld.lld'
-          cpp_ld = '{ndk_bin}/ld.lld'
-          strip = '{ndk_bin}/llvm-strip'
-
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'armv8'
-          endian = 'little'
-          """.lstrip())
-
-          Path("native.txt").write_text("""
-          [binaries]
-          c = ['ccache', 'clang']
-          cpp = ['ccache', 'clang++']
-          ar = 'llvm-ar'
-          strip = 'llvm-strip'
-          c_ld = 'lld'
-          cpp_ld = 'lld'
-          """.lstrip())
-
-          print(Path("android-aarch64.txt").read_text())
-          PY
-
-      - name: Configure Mesa
-        working-directory: mesa
-        run: |
-          meson setup build-android-aarch64 \
-            --cross-file ../android-aarch64.txt \
-            --native-file ../native.txt \
-            --prefix /tmp/zt740 \
-            -Dbuildtype=release \
-            -Dplatforms=android \
-            -Dplatform-sdk-version=$ANDROID_API \
-            -Dandroid-stub=true \
-            -Dandroid-libbacktrace=disabled \
-            -Dgallium-drivers= \
-            -Dvulkan-drivers=freedreno \
-            -Dvulkan-beta=true \
-            -Dfreedreno-kmds=kgsl \
-            -Degl=disabled \
-            -Dstrip=true
-
-      - name: Build Turnip
-        working-directory: mesa
-        run: |
-          meson compile -C build-android-aarch64
-          meson install -C build-android-aarch64
-          ccache -s
-
-      - name: Locate and verify driver
-        run: |
-          python3 - << 'PY'
-          import os, subprocess, sys
-          from pathlib import Path
-
-          roots = [Path("/tmp/zt740"), Path("mesa/build-android-aarch64")]
-          found = []
-          for root in roots:
-              if root.exists():
-                  found += [p for p in root.rglob("libvulkan_freedreno.so") if p.is_file() and ".p" not in p.parts]
-          if not found:
-              print("driver not found")
-              sys.exit(1)
-          driver = found[0]
-          print("DRIVER", driver)
-          print(subprocess.check_output(["file", str(driver)], text=True))
-
-          needed = subprocess.check_output(["readelf", "-d", str(driver)], text=True)
-          print("===== NEEDED =====")
-          print("\n".join(l for l in needed.splitlines() if "NEEDED" in l))
-
-          dyn = subprocess.check_output(["readelf", "--dyn-syms", "-W", str(driver)], text=True)
-          print("===== GLOBAL DYNSYM =====")
-          globalsyms = []
-          for l in dyn.splitlines():
-              if "UND" in l:
-                  continue
-              if "GLOBAL" in l or "vk" in l.lower() or "GetInstance" in l:
-                  globalsyms.append(l)
-          print("\n".join(globalsyms[:80]) if globalsyms else "(none)")
-
-          if "Android 34" in subprocess.check_output(["file", str(driver)], text=True):
-              sys.exit("API 34")
-          if "libc++_shared.so" in needed:
-              sys.exit("libc++_shared.so")
-
-          if "vkGetInstanceProcAddr" not in dyn and "vk_icdGetInstanceProcAddr" not in dyn:
-              print("WARN: ICD symbol not in dynsym")
-          else:
-              print("ICD symbol OK")
-
-          Path("driver_path.txt").write_text(str(driver))
-          PY
-
-      - name: Create package
-        run: |
-          python3 - << 'PY'
-          import datetime, zipfile
-          from pathlib import Path
-
-          driver = Path("driver_path.txt").read_text().strip()
-          release = Path("release")
-          release.mkdir(exist_ok=True)
-          so = release / "libvulkan_freedreno.so"
-          so.write_bytes(Path(driver).read_bytes())
-          mesa_hash = Path("mesa_commit.txt").read_text().strip()
-          date = datetime.datetime.utcnow().strftime("%Y%m%d")
-          (release / "meta.json").write_text(f'''{{
-            "schemaVersion": 1,
-            "name": "ZT740 Optimized",
-            "description": "Optimized Mesa Turnip for Snapdragon 8 Gen 2 / Adreno 740 (Eden)",
-            "author": "blackorange-sketch",
-            "packageVersion": "1.0",
-            "vendor": "Mesa",
-            "driverVersion": "Mesa-{mesa_hash}",
-            "minApi": 28,
-            "libraryName": "libvulkan_freedreno.so"
-          }}
-          ''')
-          name = f"ZT740-Optimized-{date}-{mesa_hash}.zip"
-          with zipfile.ZipFile(name, "w", zipfile.ZIP_DEFLATED) as z:
-              z.write(so, "libvulkan_freedreno.so")
-              z.write(release / "meta.json", "meta.json")
-          print("created", name)
-          PY
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: ZT740-Optimized
-          path: ZT740-Optimized-*.zip
-          if-no-files-found: error
+          tag_name: v${{ github.run_number }}
+          files: turnip_workdir/*.zip
