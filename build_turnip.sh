@@ -128,47 +128,23 @@ compile_mesa() {
 
 
     cat <<EOF > android-cross.txt
-
 [binaries]
-
 ar = '$ndk_bin/llvm-ar'
-
-c = [
-    'ccache',
-    '$ndk_bin/aarch64-linux-android${cver}-clang',
-    '--sysroot=$ndk_sys'
-]
-
-cpp = [
-    'ccache',
-    '$ndk_bin/aarch64-linux-android${cver}-clang++',
-    '--sysroot=$ndk_sys'
-]
-
+c = ['ccache', '$ndk_bin/aarch64-linux-android${cver}-clang', '--sysroot=$ndk_sys']
+cpp = ['ccache', '$ndk_bin/aarch64-linux-android${cver}-clang++', '--sysroot=$ndk_sys']
 c_ld = 'lld'
-
 cpp_ld = 'lld'
-
 strip = '$ndk_bin/aarch64-linux-android-strip'
 
-
 [host_machine]
-
 system = 'android'
-
 cpu_family = 'aarch64'
-
 cpu = 'armv8'
-
 endian = 'little'
 
-
 [built-in options]
-
 c_link_args = ['-static-libstdc++']
-
 cpp_link_args = ['-static-libstdc++']
-
 EOF
 
 
