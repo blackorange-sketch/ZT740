@@ -2,21 +2,19 @@
 set -o pipefail
 
 ###############################################################################
-# ZT740 Turnip PERF v1
+# ZT740 Turnip PERF v2
 # Snapdragon 8 Gen 2 / Adreno 740
 #
-# Based on The412Banner A6xx/A7xx build method
-# Safe compiler optimization experiment:
-#   -O3
-#   Meson optimization level 3
+# Based on working The412Banner-style build.
+# Experiment:
+#   + Meson LTO
 #
-# No device-specific Mesa patches.
+# No GPU-specific patches.
 ###############################################################################
 
 deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator python3"
 
 workdir="$(pwd)/turnip_workdir"
-
 ndkver="android-ndk-r28"
 target_sdk="35"
 
@@ -24,7 +22,7 @@ target_sdk="35"
 check_deps() {
     for dep in $deps; do
         if ! command -v "$dep" >/dev/null 2>&1; then
-            echo "Missing dependency: $dep"
+            echo "Missing: $dep"
             exit 1
         fi
     done
@@ -38,20 +36,17 @@ prepare_ndk() {
     cd "$workdir"
 
     if [ ! -d "$ndkver" ]; then
-        echo "Downloading Android NDK r28..."
+        echo "Downloading Android NDK..."
 
         curl -L \
             "https://dl.google.com/android/repository/${ndkver}-linux.zip" \
             --output "${ndkver}-linux.zip"
 
         echo "Extracting Android NDK..."
-
         unzip -q "${ndkver}-linux.zip"
     fi
 
     export ANDROID_NDK_HOME="$workdir/$ndkver"
-
-    echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
 }
 
 
@@ -60,18 +55,20 @@ compile_mesa() {
     local repo_url="https://gitlab.freedesktop.org/mesa/mesa.git"
     local branch="main"
 
-    local build_name="ZT740 PERF v1 - Adreno 740"
-    local output_tag="ZT740-PERF-v1"
+    local build_name="ZT740 PERF v2 LTO - Adreno 740"
+    local output_tag="ZT740-PERF-v2-LTO"
+
 
     echo "========================================"
-    echo "ZT740 TURNIP PERF v1"
+    echo "ZT740 TURNIP PERF v2"
     echo "Snapdragon 8 Gen 2 / Adreno 740"
+    echo "LTO ENABLED"
     echo "========================================"
 
-    echo
-    echo "Cloning Mesa Main..."
 
     cd "$workdir"
+
+    echo "Cloning Mesa Main..."
 
     rm -rf mesa
 
@@ -84,23 +81,18 @@ compile_mesa() {
     cd mesa
 
 
-    echo
     echo "Preparing SPIR-V subprojects..."
 
     mkdir -p subprojects
-
     cd subprojects
 
-    rm -rf spirv-tools
-    rm -rf spirv-headers
+    rm -rf spirv-tools spirv-headers
 
-    git clone \
-        --depth=1 \
+    git clone --depth=1 \
         https://github.com/KhronosGroup/SPIRV-Tools.git \
         spirv-tools
 
-    git clone \
-        --depth=1 \
+    git clone --depth=1 \
         https://github.com/KhronosGroup/SPIRV-Headers.git \
         spirv-headers
 
@@ -112,11 +104,7 @@ compile_mesa() {
     rm -rf "$build_dir"
 
 
-    echo
-    echo "Preparing Android cross file..."
-
     local ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
     local ndk_sys="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
 
@@ -125,6 +113,9 @@ compile_mesa() {
     if [ ! -f "$ndk_bin/aarch64-linux-android${cver}-clang" ]; then
         cver="34"
     fi
+
+
+    echo "Creating Android cross file..."
 
 
     cat <<EOF > android-cross.txt
@@ -148,40 +139,35 @@ cpp_link_args = ['-static-libstdc++']
 EOF
 
 
-    echo
-    echo "Applying compiler flags..."
-
-    export CFLAGS="-O3 -D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
-
-    export CXXFLAGS="-O3 -D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
+    # Same basic flags as the working BASE build.
+    export CFLAGS="-D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
+    export CXXFLAGS="-D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
 
 
-    echo
-    echo "Configuring Mesa..."
+    echo "Configuring Mesa with LTO..."
 
 
     meson setup "$build_dir" \
         --cross-file android-cross.txt \
         -Dbuildtype=release \
-        -Doptimization=3 \
         -Dplatforms=android \
         -Dplatform-sdk-version="$target_sdk" \
         -Dandroid-stub=true \
         -Dgallium-drivers= \
         -Dvulkan-drivers=freedreno \
         -Dfreedreno-kmds=kgsl \
+        -Dvulkan-beta=true \
+        -Db_lto=true \
         -Degl=disabled \
         -Dglx=disabled \
-        -Dvulkan-beta=true \
         -Ddefault_library=shared \
         -Dzstd=disabled \
         -Dwerror=false \
         --force-fallback-for=spirv-tools,spirv-headers
 
 
-    echo
     echo "========================================"
-    echo "Building Turnip..."
+    echo "Building Turnip with LTO..."
     echo "========================================"
 
 
@@ -192,55 +178,35 @@ EOF
 
 
     if [ ! -f "$lib" ]; then
-
-        echo
-        echo "========================================"
         echo "BUILD FAILED"
         echo "Turnip library not found:"
         echo "$lib"
-        echo "========================================"
-
         exit 1
-
     fi
 
 
-    echo
-    echo "Turnip library found:"
-    echo "$lib"
-
+    echo "Driver found:"
     ls -lh "$lib"
 
 
     local pkg_dir="$workdir/pkg_$output_tag"
 
-
     rm -rf "$pkg_dir"
-
     mkdir -p "$pkg_dir"
 
 
-    echo
-    echo "Creating Eden driver package..."
-
-
-    cp "$lib" \
-        "$pkg_dir/vulkan.ad07XX.so"
-
+    cp "$lib" "$pkg_dir/vulkan.ad07XX.so"
 
     cd "$pkg_dir"
 
 
-    echo
     echo "Setting SONAME..."
-
 
     patchelf \
         --set-soname "vulkan.adreno.so" \
         vulkan.ad07XX.so
 
 
-    echo
     echo "Creating meta.json..."
 
 
@@ -248,9 +214,9 @@ EOF
 {
   "schemaVersion": 1,
   "name": "$build_name",
-  "description": "Mesa Main Turnip PERF v1 for Snapdragon 8 Gen 2 / Adreno 740",
+  "description": "Mesa Main Turnip with LTO for Snapdragon 8 Gen 2 / Adreno 740",
   "author": "blackorange-sketch",
-  "packageVersion": "1",
+  "packageVersion": "2",
   "vendor": "Mesa",
   "driverVersion": "$output_tag",
   "minApi": 28,
@@ -259,11 +225,7 @@ EOF
 EOF
 
 
-    echo
-    echo "Creating ZIP package..."
-
-
-    cd "$pkg_dir"
+    echo "Creating driver package..."
 
 
     zip -9 \
@@ -277,21 +239,13 @@ EOF
     echo "BUILD COMPLETE"
     echo "========================================"
 
-    echo
-    echo "Driver:"
+    echo "Output:"
     echo "$workdir/Turnip-${output_tag}.zip"
 
-    echo
-
-    ls -lh \
-        "$workdir/Turnip-${output_tag}.zip"
-
-    echo
+    ls -lh "$workdir/Turnip-${output_tag}.zip"
 }
 
 
 check_deps
-
 prepare_ndk
-
 compile_mesa
