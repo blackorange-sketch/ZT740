@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Amaral Driver Lab <rickamaral94@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 00:00:00 +0000
+Subject: [PATCH] tu/driconf: isolate Balemuni Zelda profiles by title
+
+Porta o comportamento efetivo encontrado no driconf do binario oficial
+Balemuni Apex V2, mas sem copiar sua regra ampla para todos os emuladores.
+
+O Apex V2 combina quatro opcoes de compatibilidade numa regra de engine muito
+ampla com pinning GMEM por titulo. No driver universal isso aumentaria o custo
+de tile load e mudaria o compilador para todos os jogos. Aqui as opcoes ficam
+inteiramente dentro das regras BOTW/TOTK e so ativam quando o aplicativo expoe
+o titulo em pApplicationName.
+
+O escopo e' por aplicativo, nao por chip: os caminhos nao possuem dependencia
+de geracao e o autotuner continua intacto para todos os demais workloads. A
+regra e' reversivel removendo este patch. Nao ha alegacao de ganho de FPS; e'
+um candidato de compatibilidade grafica ainda pendente de A/B independente.
+
+Nao entram:
+
+* tu_emulate_alpha_to_coverage: era uma analogia Amaral sem evidencia e nao
+  aparece no Apex V2;
+* regra por engine/emulador: afetaria toda a biblioteca e nao identifica o
+  jogo;
+* cache de shader de 4 GiB: tamanho nao evita compilacao inicial e nao ha A/B;
+* TU_DEBUG ou GMEM global: substituiriam o autotuner fora dos dois titulos.
+
+---
+diff --git a/src/freedreno/vulkan/00-turnip-defaults.conf b/src/freedreno/vulkan/00-turnip-defaults.conf
+index 1ad9b27..08b37bc 100644
+--- a/src/freedreno/vulkan/00-turnip-defaults.conf
++++ b/src/freedreno/vulkan/00-turnip-defaults.conf
+@@ -69,6 +69,37 @@
+              -->
+             <option name="tu_allow_oob_indirect_ubo_loads" value="true" />
+         </engine>
++        <!-- Perfis reconstruidos do driconf do Balemuni Apex V2. Eles sao
++             deliberadamente condicionados ao titulo, em vez de uma regra
++             ampla por emulador. Isso permite que A6xx, A7xx e A8xx usem a
++             mesma correcao quando o frontend expoe BOTW/TOTK em
++             pApplicationName, sem penalizar os demais jogos. -->
++        <application name="The Legend of Zelda: Breath of the Wild"
++                     application_name_match=".*(botw).*">
++            <!-- O Apex V2 usa estas quatro opcoes para a sua lista inteira de
++                 emuladores. No Amaral elas ficam presas ao titulo. -->
++            <option name="tu_enable_fast_border_color_for_undefined_formats" value="true" />
++            <option name="tu_use_tex_coord_round_nearest_even_mode" value="true" />
++            <option name="tu_allow_oob_indirect_ubo_loads" value="true" />
++            <option name="tu_dont_care_as_load" value="true" />
++            <!-- prefer_gmem nao e' TU_DEBUG=gmem: mantem SYSMEM para
++                 renderpasses impossiveis e para o aquecimento inicial do
++                 autotuner. Ainda assim, e' uma preferencia forte e precisa
++                 de A/B nas GPUs com GMEM menor. -->
++            <option name="tu_autotune_algorithm" value="prefer_gmem" />
++        </application>
++        <application name="The Legend of Zelda: Tears of the Kingdom"
++                     application_name_match=".*(totk).*">
++            <option name="tu_enable_fast_border_color_for_undefined_formats" value="true" />
++            <option name="tu_use_tex_coord_round_nearest_even_mode" value="true" />
++            <option name="tu_allow_oob_indirect_ubo_loads" value="true" />
++            <option name="tu_dont_care_as_load" value="true" />
++            <option name="tu_autotune_algorithm" value="prefer_gmem" />
++            <!-- Trata a direcao de profundidade como indefinida, a mesma
++                 opcao que o Mesa upstream ja usa para Creed e Sons of the
++                 Forest quando o aplicativo depende desse comportamento. -->
++            <option name="tu_ignore_frag_depth_direction" value="true" />
++        </application>
+         <application name="Sons Of The Forest" application_name_match="SonsOfTheForest.exe">
+             <option name="tu_ignore_frag_depth_direction" value="true" />
+         </application>

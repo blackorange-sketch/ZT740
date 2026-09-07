@@ -48,6 +48,7 @@ check_patches() {
     local required_patches=(
         "0004-depth-extensions.patch"
         "0005-a740-aurora-performance.patch"
+        "0006-emulator-compat-driconf.patch"
     )
 
     for patch in "${required_patches[@]}"; do
@@ -215,6 +216,7 @@ compile_mesa() {
     apply_patch "$patch_dir/0004-depth-extensions.patch"
 
     apply_patch "$patch_dir/0005-a740-aurora-performance.patch"
+    apply_patch "$patch_dir/0006-emulator-compat-driconf.patch"
 
 
     echo
