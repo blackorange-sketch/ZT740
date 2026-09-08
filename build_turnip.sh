@@ -1,338 +1,412 @@
-#!/bin/bash
-set -e
+#!/bin/bash -e
 set -o pipefail
 
-# ============================================================
-# ZT740 Turnip Builder v2
-# Target: Snapdragon 8 Gen 2 / Adreno 740
-# Emulator: Eden
-# Android: AArch64
-# Mesa: main
-# NDK: r28
-# ============================================================
+###############################################################################
+# ZT740 Turnip PERF v2.1
+#
+# Target:
+#   Snapdragon 8 Gen 2
+#   Adreno 740 / FD740
+#
+# Based on:
+#   Mesa Main
+#   The412Banner A6xx/A7xx build approach
+#
+# Optimizations:
+#   -O3
+#   Mesa optimization level 3
+#
+# Patches:
+#   0004 - Depth extensions
+#   0005 - A740 Aurora performance
+#   0006 - Emulator compatibility driconf
+#   0007 - A740 UBWC hint
+#
+# No LTO:
+#   Mesa explicitly does not support LTO builds.
+###############################################################################
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator python3"
 
-WORKDIR="$SCRIPT_DIR/turnip_workdir"
-NDK_DIR="$WORKDIR/android-ndk-r28"
-MESA_DIR="$WORKDIR/mesa"
-BUILD_DIR="$WORKDIR/mesa-build"
-PACKAGE_DIR="$WORKDIR/package"
+workdir="$(pwd)/turnip_workdir"
 
-NDK_VERSION="android-ndk-r28"
-NDK_ZIP="$WORKDIR/android-ndk-r28-linux.zip"
+ndkver="android-ndk-r28"
+target_sdk="35"
 
-TARGET_SDK="35"
-TARGET_API="35"
 
-MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
-MESA_BRANCH="main"
-
-# ------------------------------------------------------------
-# Output
-# ------------------------------------------------------------
-
-OUTPUT_DIR="$SCRIPT_DIR/releases"
-
-mkdir -p "$OUTPUT_DIR"
-
-OUTPUT_ZIP="$OUTPUT_DIR/ZT740-PERF-v2.zip"
-
-# ------------------------------------------------------------
-# Patches
-# ------------------------------------------------------------
-
-PATCH_DIR="$SCRIPT_DIR/patches"
-
-PATCHES=(
-    "0004-depth-extensions.patch"
-    "0005-a740-aurora-performance.patch"
-    "0006-emulator-compat-driconf.patch"
-    "0007-a740-ubwc-hint.patch"
-)
-
-# ------------------------------------------------------------
+###############################################################################
 # Dependencies
-# ------------------------------------------------------------
+###############################################################################
 
 check_deps() {
 
-    echo
-    echo "============================================================"
-    echo "Checking build dependencies"
-    echo "============================================================"
+    echo "========================================"
+    echo "Checking dependencies"
+    echo "========================================"
 
-    local deps=(
-        ninja
-        meson
-        patchelf
-        unzip
-        curl
-        flex
-        bison
-        zip
-        git
-        perl
-        python3
-        glslangValidator
-        llvm-ar
-        clang
-        ccache
-    )
-
-    for dep in "${deps[@]}"; do
+    for dep in $deps; do
 
         if ! command -v "$dep" >/dev/null 2>&1; then
+
             echo
             echo "ERROR: Missing dependency: $dep"
             echo
             echo "Install the missing package and run again."
+
             exit 1
+
         fi
 
     done
 
-    echo
-    echo "All dependencies found."
+
+    echo "Installing Python build dependencies..."
+
+    pip install meson mako --break-system-packages
+
+
+    echo "Dependencies OK."
 }
 
-# ------------------------------------------------------------
-# Check patches
-# ------------------------------------------------------------
 
-check_patches() {
-
-    echo
-    echo "============================================================"
-    echo "Checking ZT740 patches"
-    echo "============================================================"
-
-    for patch_name in "${PATCHES[@]}"; do
-
-        patch="$PATCH_DIR/$patch_name"
-
-        if [ ! -f "$patch" ]; then
-            echo
-            echo "ERROR: Missing patch:"
-            echo "$patch"
-            exit 1
-        fi
-
-        echo "Found: $patch_name"
-
-    done
-
-    echo
-    echo "All patches found."
-}
-
-# ------------------------------------------------------------
-# Prepare NDK
-# ------------------------------------------------------------
+###############################################################################
+# Android NDK
+###############################################################################
 
 prepare_ndk() {
 
     echo
-    echo "============================================================"
+    echo "========================================"
     echo "Preparing Android NDK"
-    echo "============================================================"
+    echo "========================================"
 
-    mkdir -p "$WORKDIR"
+    mkdir -p "$workdir"
 
-    if [ -d "$NDK_DIR" ]; then
-        echo "NDK already exists:"
-        echo "$NDK_DIR"
-        return
-    fi
+    cd "$workdir"
 
-    if [ ! -f "$NDK_ZIP" ]; then
+
+    if [ ! -d "$ndkver" ]; then
 
         echo "Downloading Android NDK r28..."
 
         curl -L \
-            -o "$NDK_ZIP" \
-            "https://dl.google.com/android/repository/android-ndk-r28-linux.zip"
+            "https://dl.google.com/android/repository/${ndkver}-linux.zip" \
+            --output "${ndkver}-linux.zip"
 
-    fi
 
-    echo "Extracting NDK..."
-
-    unzip -q "$NDK_ZIP" -d "$WORKDIR"
-
-    if [ ! -d "$NDK_DIR" ]; then
         echo
-        echo "ERROR: NDK extraction failed."
-        exit 1
+        echo "Extracting Android NDK..."
+
+        unzip -q "${ndkver}-linux.zip"
+
+    else
+
+        echo "Android NDK already exists."
+
     fi
 
-    echo "NDK ready."
-}
 
-# ------------------------------------------------------------
-# Clone Mesa
-# ------------------------------------------------------------
+    export ANDROID_NDK_HOME="$workdir/$ndkver"
 
-prepare_mesa() {
 
     echo
-    echo "============================================================"
-    echo "Preparing Mesa"
-    echo "============================================================"
+    echo "ANDROID_NDK_HOME:"
+    echo "$ANDROID_NDK_HOME"
 
-    rm -rf "$MESA_DIR"
-    rm -rf "$BUILD_DIR"
+}
 
-    echo "Cloning Mesa main..."
+
+###############################################################################
+# Mesa Build
+###############################################################################
+
+compile_mesa() {
+
+
+    local repo_url="https://gitlab.freedesktop.org/mesa/mesa.git"
+
+    local branch="main"
+
+
+    local build_name="ZT740 PERF v2.1 - Adreno 740"
+
+    local output_tag="ZT740-PERF-v2.1"
+
+
+    echo
+    echo "========================================"
+    echo "ZT740 TURNIP PERF v2.1"
+    echo "========================================"
+
+    echo
+    echo "Target:"
+    echo "Snapdragon 8 Gen 2"
+    echo "Adreno 740 / FD740"
+
+    echo
+    echo "Mesa branch:"
+    echo "$branch"
+
+    echo
+    echo "Optimization:"
+    echo "-O3"
+
+    echo
+    echo "========================================"
+
+
+    cd "$workdir"
+
+
+    ############################################################################
+    # Clone Mesa
+    ############################################################################
+
+
+    echo
+    echo "Cloning Mesa Main..."
+
+
+    rm -rf mesa
+
 
     git clone \
-        --depth 1 \
-        --branch "$MESA_BRANCH" \
-        "$MESA_REPO" \
-        "$MESA_DIR"
+        --depth 100 \
+        -b "$branch" \
+        "$repo_url" \
+        mesa
 
-    cd "$MESA_DIR"
 
-    MESA_COMMIT="$(git rev-parse HEAD)"
+    cd mesa
+
 
     echo
     echo "Mesa commit:"
-    echo "$MESA_COMMIT"
+
+    git log -1 --oneline
+
+
+    ############################################################################
+    # SPIR-V dependencies
+    ############################################################################
+
 
     echo
-    echo "Mesa version:"
-    git describe --always --dirty 2>/dev/null || true
-}
+    echo "Preparing SPIR-V subprojects..."
 
-# ------------------------------------------------------------
-# Prepare SPIR-V dependencies
-# ------------------------------------------------------------
 
-prepare_spirv() {
+    mkdir -p subprojects
 
-    echo
-    echo "============================================================"
-    echo "Preparing SPIR-V dependencies"
-    echo "============================================================"
 
-    cd "$MESA_DIR"
+    cd subprojects
 
-    if [ ! -d "subprojects/SPIRV-Tools" ]; then
 
-        echo "Cloning SPIRV-Tools..."
+    rm -rf spirv-tools
 
-        git clone \
-            --depth 1 \
-            https://github.com/KhronosGroup/SPIRV-Tools.git \
-            subprojects/SPIRV-Tools
+    rm -rf spirv-headers
 
-    fi
-
-    if [ ! -d "subprojects/spirv-headers" ]; then
-
-        echo "Cloning SPIR-V-Headers..."
-
-        git clone \
-            --depth 1 \
-            https://github.com/KhronosGroup/SPIRV-Headers.git \
-            subprojects/spirv-headers
-
-    fi
-}
-
-# ------------------------------------------------------------
-# Apply patches
-# ------------------------------------------------------------
-
-apply_patches() {
 
     echo
-    echo "============================================================"
-    echo "Checking and applying ZT740 patches"
-    echo "============================================================"
+    echo "Cloning SPIRV-Tools..."
 
-    cd "$MESA_DIR"
 
-    for patch_name in "${PATCHES[@]}"; do
+    git clone \
+        --depth=1 \
+        https://github.com/KhronosGroup/SPIRV-Tools.git \
+        spirv-tools
 
-        patch="$PATCH_DIR/$patch_name"
+
+    echo
+    echo "Cloning SPIRV-Headers..."
+
+
+    git clone \
+        --depth=1 \
+        https://github.com/KhronosGroup/SPIRV-Headers.git \
+        spirv-headers
+
+
+    cd ..
+
+
+    ############################################################################
+    # Apply patches
+    ############################################################################
+
+
+    echo
+    echo "========================================"
+    echo "Applying patches"
+    echo "========================================"
+
+
+    local patch_dir
+
+
+    patch_dir="$(cd "$(dirname "$0")" && pwd)/patches"
+
+
+    echo
+    echo "Patch directory:"
+
+    echo "$patch_dir"
+
+
+    apply_patch() {
+
+        local patch="$1"
 
         echo
-        echo "------------------------------------------------------------"
-        echo "Checking $patch_name"
-        echo "------------------------------------------------------------"
+        echo "Applying: $(basename "$patch")"
 
-        if ! git apply --check "$patch"; then
+
+        if [ ! -f "$patch" ]; then
 
             echo
-            echo "============================================================"
-            echo "ERROR: Patch check failed"
-            echo "============================================================"
-            echo
-            echo "Patch:"
-            echo "$patch_name"
-            echo
-            echo "Mesa commit:"
-            echo "$MESA_COMMIT"
-            echo
-            echo "The patch was NOT applied."
-            echo
-            echo "Do NOT bypass this with --reject or --3way."
-            echo "Review the patch against this Mesa revision."
-            echo
+            echo "ERROR: Patch not found:"
+            echo "$patch"
 
             exit 1
+
         fi
 
-        echo "Check OK."
 
-        echo
-        echo "Applying $patch_name..."
+        git apply --check "$patch"
+
 
         git apply "$patch"
 
-        echo "Applied successfully."
 
-    done
+        echo "OK"
+
+    }
+
+
+    apply_patch \
+        "$patch_dir/0004-depth-extensions.patch"
+
+
+    apply_patch \
+        "$patch_dir/0005-a740-aurora-performance.patch"
+
+
+    apply_patch \
+        "$patch_dir/0006-emulator-compat-driconf.patch"
+
+
+    apply_patch \
+        "$patch_dir/0007-a740-ubwc-hint.patch"
+
 
     echo
-    echo "============================================================"
-    echo "All ZT740 patches applied successfully."
-    echo "============================================================"
+    echo "All patches applied successfully."
+
+
+    ############################################################################
+    # Build directory
+    ############################################################################
+
+
+    local build_dir="$workdir/mesa/build"
+
+
+    rm -rf "$build_dir"
+
+
+    ############################################################################
+    # Android toolchain
+    ############################################################################
+
 
     echo
-    echo "Applied patches:"
+    echo "========================================"
+    echo "Preparing Android cross compilation"
+    echo "========================================"
 
-    for patch_name in "${PATCHES[@]}"; do
-        echo "  - $patch_name"
-    done
-}
 
-# ------------------------------------------------------------
-# Android cross file
-# ------------------------------------------------------------
+    local ndk_bin
 
-create_cross_file() {
+    local ndk_sys
 
-    echo
-    echo "============================================================"
-    echo "Creating Android cross file"
-    echo "============================================================"
 
-    local ndk_bin="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    local ndk_sys="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+    ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+
+    ndk_sys="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
 
     if [ ! -d "$ndk_bin" ]; then
+
         echo
-        echo "ERROR: NDK LLVM toolchain not found:"
+        echo "ERROR: NDK toolchain directory not found:"
         echo "$ndk_bin"
+
         exit 1
+
     fi
 
-    cat > "$MESA_DIR/android-cross.txt" <<EOF
+
+    local cver="$target_sdk"
+
+
+    if [ ! -f \
+        "$ndk_bin/aarch64-linux-android${cver}-clang" ]; then
+
+
+        echo
+        echo "API ${cver} compiler not found."
+
+        echo "Trying API 34..."
+
+
+        cver="34"
+
+    fi
+
+
+    if [ ! -f \
+        "$ndk_bin/aarch64-linux-android${cver}-clang" ]; then
+
+
+        echo
+        echo "ERROR: Android clang compiler not found."
+
+        echo
+        echo "Expected:"
+        echo "$ndk_bin/aarch64-linux-android${cver}-clang"
+
+        exit 1
+
+    fi
+
+
+    echo
+    echo "NDK bin:"
+    echo "$ndk_bin"
+
+    echo
+    echo "NDK sysroot:"
+    echo "$ndk_sys"
+
+    echo
+    echo "Target API:"
+    echo "$cver"
+
+
+    ############################################################################
+    # Meson cross file
+    ############################################################################
+
+
+    echo
+    echo "Creating android-cross.txt..."
+
+
+    cat > android-cross.txt <<EOF
 [binaries]
 ar = '$ndk_bin/llvm-ar'
-c = ['ccache', '$ndk_bin/aarch64-linux-android${TARGET_API}-clang', '--sysroot=$ndk_sys']
-cpp = ['ccache', '$ndk_bin/aarch64-linux-android${TARGET_API}-clang++', '--sysroot=$ndk_sys']
+c = ['$ndk_bin/aarch64-linux-android${cver}-clang', '--sysroot=$ndk_sys']
+cpp = ['$ndk_bin/aarch64-linux-android${cver}-clang++', '--sysroot=$ndk_sys']
 c_ld = 'lld'
 cpp_ld = 'lld'
 strip = '$ndk_bin/aarch64-linux-android-strip'
@@ -348,40 +422,71 @@ c_link_args = ['-static-libstdc++']
 cpp_link_args = ['-static-libstdc++']
 EOF
 
-    echo "Cross file created:"
-    echo "$MESA_DIR/android-cross.txt"
-}
-
-# ------------------------------------------------------------
-# Build Mesa
-# ------------------------------------------------------------
-
-compile_mesa() {
 
     echo
-    echo "============================================================"
+    echo "Cross file created."
+
+
+    cat android-cross.txt
+
+
+    ############################################################################
+    # Compiler flags
+    ############################################################################
+
+
+    echo
+    echo "========================================"
+    echo "Applying compiler flags"
+    echo "========================================"
+
+
+    export CFLAGS="\
+-O3 \
+-D__ANDROID__ \
+-Wno-error \
+-Wno-deprecated-declarations"
+
+
+    export CXXFLAGS="\
+-O3 \
+-D__ANDROID__ \
+-Wno-error \
+-Wno-deprecated-declarations"
+
+
+    echo
+
+    echo "CFLAGS:"
+
+    echo "$CFLAGS"
+
+
+    echo
+
+    echo "CXXFLAGS:"
+
+    echo "$CXXFLAGS"
+
+
+    ############################################################################
+    # Meson
+    ############################################################################
+
+
+    echo
+    echo "========================================"
     echo "Configuring Mesa"
-    echo "============================================================"
+    echo "========================================"
 
-    cd "$MESA_DIR"
 
-    local ndk_bin="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
-    export PATH="$ndk_bin:$PATH"
-
-    export CCACHE_DIR="$WORKDIR/ccache"
-
-    export CFLAGS="-O3 -D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
-    export CXXFLAGS="-O3 -D__ANDROID__ -Wno-error -Wno-deprecated-declarations"
-
-    mkdir -p "$CCACHE_DIR"
-
-    meson setup "$BUILD_DIR" \
+    meson setup \
+        "$build_dir" \
         --cross-file android-cross.txt \
         -Dbuildtype=release \
         -Doptimization=3 \
         -Dplatforms=android \
-        -Dplatform-sdk-version="$TARGET_SDK" \
+        -Dplatform-sdk-version="$target_sdk" \
         -Dandroid-stub=true \
         -Dgallium-drivers= \
         -Dvulkan-drivers=freedreno \
@@ -394,239 +499,237 @@ compile_mesa() {
         -Dwerror=false \
         --force-fallback-for=spirv-tools,spirv-headers
 
-    echo
-    echo "============================================================"
-    echo "Building Mesa"
-    echo "============================================================"
 
-    ninja \
-        -C "$BUILD_DIR" \
-        -j"$(nproc)"
+    ############################################################################
+    # Build
+    ############################################################################
+
 
     echo
-    echo "Mesa build completed."
-}
+    echo "========================================"
+    echo "Building Turnip"
+    echo "========================================"
 
-# ------------------------------------------------------------
-# Find Vulkan library
-# ------------------------------------------------------------
 
-find_vulkan_library() {
+    ninja -C "$build_dir"
 
-    echo
-    echo "============================================================"
-    echo "Locating Turnip Vulkan library"
-    echo "============================================================"
 
-    local candidates=(
-        "$BUILD_DIR/src/freedreno/vulkan/libvulkan_freedreno.so"
-        "$BUILD_DIR/src/freedreno/vulkan/libvulkan_freedreno.so.1"
-        "$BUILD_DIR/src/freedreno/vulkan/libvulkan_freedreno.so.1.0.0"
-    )
+    ############################################################################
+    # Check output
+    ############################################################################
 
-    VULKAN_LIB=""
 
-    for candidate in "${candidates[@]}"; do
+    local lib
 
-        if [ -f "$candidate" ]; then
-            VULKAN_LIB="$candidate"
-            break
-        fi
 
-    done
+    lib="$build_dir/src/freedreno/vulkan/libvulkan_freedreno.so"
 
-    if [ -z "$VULKAN_LIB" ]; then
 
-        VULKAN_LIB="$(find "$BUILD_DIR" \
-            -type f \
-            \( \
-                -name "libvulkan_freedreno.so" \
-                -o -name "libvulkan_freedreno.so.*" \
-            \) \
-            | head -n 1)"
+    if [ ! -f "$lib" ]; then
 
-    fi
-
-    if [ -z "$VULKAN_LIB" ] || [ ! -f "$VULKAN_LIB" ]; then
 
         echo
-        echo "ERROR: Could not find Turnip Vulkan library."
+        echo "========================================"
+
+        echo "BUILD FAILED"
+
+        echo "========================================"
+
         echo
-        echo "Searching build tree:"
-        find "$BUILD_DIR" -type f -name "*.so" | head -50
+
+        echo "Turnip library not found:"
+
+        echo "$lib"
+
+
         exit 1
 
+
     fi
 
-    echo
-    echo "Found:"
-    echo "$VULKAN_LIB"
-}
-
-# ------------------------------------------------------------
-# Package
-# ------------------------------------------------------------
-
-package_driver() {
 
     echo
-    echo "============================================================"
-    echo "Packaging ZT740 PERF v2"
-    echo "============================================================"
+    echo "========================================"
 
-    rm -rf "$PACKAGE_DIR"
-    mkdir -p "$PACKAGE_DIR"
+    echo "TURNIP BUILD SUCCESSFUL"
 
-    local output_lib="$PACKAGE_DIR/vulkan.ad07XX.so"
+    echo "========================================"
 
-    cp "$VULKAN_LIB" "$output_lib"
+
+    echo
+    echo "Library:"
+
+
+    echo "$lib"
+
+
+    echo
+
+
+    ls -lh "$lib"
+
+
+    ############################################################################
+    # Package
+    ############################################################################
+
+
+    local pkg_dir
+
+
+    pkg_dir="$workdir/pkg_$output_tag"
+
+
+    rm -rf "$pkg_dir"
+
+
+    mkdir -p "$pkg_dir"
+
+
+    echo
+    echo "========================================"
+
+    echo "Creating Eden driver package"
+
+    echo "========================================"
+
+
+    cp \
+        "$lib" \
+        "$pkg_dir/vulkan.ad07XX.so"
+
+
+    cd "$pkg_dir"
+
 
     echo
     echo "Setting SONAME..."
 
+
     patchelf \
         --set-soname "vulkan.adreno.so" \
-        "$output_lib"
+        vulkan.ad07XX.so
 
-    local driver_version
 
-    driver_version="$(
-        cd "$MESA_DIR"
-        git describe --always --dirty 2>/dev/null || echo "$MESA_COMMIT"
-    )"
+    echo
+    echo "SONAME:"
 
-    cat > "$PACKAGE_DIR/meta.json" <<EOF
+
+    readelf \
+        -d vulkan.ad07XX.so \
+        | grep SONAME \
+        || true
+
+
+    ############################################################################
+    # meta.json
+    ############################################################################
+
+
+    echo
+    echo "Creating meta.json..."
+
+
+    cat > meta.json <<EOF
 {
-    "schemaVersion": 1,
-    "name": "ZT740 PERF v2",
-    "description": "Custom Mesa Turnip driver for Snapdragon 8 Gen 2 / Adreno 740 with A740 performance, depth, UBWC and Eden Zelda compatibility patches.",
-    "author": "blackorange-sketch",
-    "packageVersion": "2",
-    "vendor": "Mesa",
-    "driverVersion": "$driver_version",
-    "minApi": 28,
-    "libraryName": "vulkan.ad07XX.so"
+  "schemaVersion": 1,
+  "name": "$build_name",
+  "description": "Mesa Main Turnip PERF v2.1 for Snapdragon 8 Gen 2 / Adreno 740",
+  "author": "blackorange-sketch",
+  "packageVersion": "1",
+  "vendor": "Mesa",
+  "driverVersion": "$output_tag",
+  "minApi": 28,
+  "libraryName": "vulkan.ad07XX.so"
 }
 EOF
 
+
     echo
-    echo "Package contents:"
-    ls -lh "$PACKAGE_DIR"
+    echo "meta.json:"
 
-    rm -f "$OUTPUT_ZIP"
 
-    cd "$PACKAGE_DIR"
+    cat meta.json
 
-    zip -9 \
-        "$OUTPUT_ZIP" \
+
+    ############################################################################
+    # ZIP
+    ############################################################################
+
+
+    echo
+    echo "Creating ZIP package..."
+
+
+    cd "$pkg_dir"
+
+
+    zip \
+        -9 \
+        "$workdir/Turnip-${output_tag}.zip" \
         vulkan.ad07XX.so \
         meta.json
 
+
+    ############################################################################
+    # Verify package
+    ############################################################################
+
+
     echo
-    echo "============================================================"
-    echo "Package created"
-    echo "============================================================"
+    echo "========================================"
 
-    ls -lh "$OUTPUT_ZIP"
+    echo "BUILD COMPLETE"
+
+    echo "========================================"
+
+
+    echo
+    echo "Driver package:"
+
+
+    echo "$workdir/Turnip-${output_tag}.zip"
+
+
+    echo
+
+
+    ls -lh \
+        "$workdir/Turnip-${output_tag}.zip"
+
+
+    echo
+
+
+    echo "Package contents:"
+
+
+    unzip \
+        -l \
+        "$workdir/Turnip-${output_tag}.zip"
+
+
+    echo
+
+
+    echo "========================================"
+
+    echo "ZT740 TURNIP PERF v2.1 COMPLETE"
+
+    echo "========================================"
+
 }
 
-# ------------------------------------------------------------
-# Build information
-# ------------------------------------------------------------
 
-write_build_info() {
-
-    local info_file="$PACKAGE_DIR/build-info.txt"
-
-    cat > "$info_file" <<EOF
-ZT740 PERF v2
-==============
-
-Target:
-Snapdragon 8 Gen 2 / Adreno 740
-
-Mesa:
-$MESA_COMMIT
-
-NDK:
-$NDK_VERSION
-
-Android API:
-$TARGET_API
-
-Optimization:
--O3
-
-Mesa optimization:
--Doptimization=3
-
-Vulkan:
-freedreno / Turnip
-
-KMD:
-KGSL
-
-Patches:
-0004-depth-extensions.patch
-0005-a740-aurora-performance.patch
-0006-emulator-compat-driconf.patch
-0007-a740-ubwc-hint.patch
-
-LTO:
-disabled
-
-Global SYSMEM forcing:
-disabled
-
-Turnip autotuner:
-enabled
-EOF
-
-    cd "$PACKAGE_DIR"
-
-    zip -9 \
-        "$OUTPUT_ZIP" \
-        build-info.txt
-}
-
-# ------------------------------------------------------------
+###############################################################################
 # Main
-# ------------------------------------------------------------
+###############################################################################
 
-main() {
 
-    echo
-    echo "============================================================"
-    echo "        ZT740 PERF v2 TURNIP BUILDER"
-    echo "============================================================"
-    echo
-    echo "Target : Snapdragon 8 Gen 2 / Adreno 740"
-    echo "Eden   : Vulkan / Turnip"
-    echo "Mesa   : main"
-    echo "NDK    : r28"
-    echo "SDK    : $TARGET_SDK"
-    echo
+check_deps
 
-    check_deps
-    check_patches
-    prepare_ndk
-    prepare_mesa
-    prepare_spirv
-    apply_patches
-    create_cross_file
-    compile_mesa
-    find_vulkan_library
-    package_driver
-    write_build_info
 
-    echo
-    echo "============================================================"
-    echo "             BUILD SUCCESSFUL"
-    echo "============================================================"
-    echo
-    echo "Output:"
-    echo "$OUTPUT_ZIP"
-    echo
-}
+prepare_ndk
 
-main "$@"
+
+compile_mesa
