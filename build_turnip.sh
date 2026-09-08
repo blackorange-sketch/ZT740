@@ -30,6 +30,9 @@ deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator pyt
 
 workdir="$(pwd)/turnip_workdir"
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+patch_dir="$script_dir/patches"
+
 ndkver="android-ndk-r28"
 target_sdk="35"
 
@@ -179,6 +182,29 @@ compile_mesa() {
 
     cd mesa
 
+    
+echo
+echo "Applying Mesa patches..."
+
+for patch in \
+    "$patch_dir/0004-depth-extensions.patch" \
+    "$patch_dir/0005-a740-aurora-performance.patch" \
+    "$patch_dir/0006-emulator-compat-driconf.patch" \
+    "$patch_dir/0007-a740-ubwc-hint.patch"
+do
+    if [ ! -f "$patch" ]; then
+        echo "ERROR: Patch not found:"
+        echo "$patch"
+        exit 1
+    fi
+
+    echo "Applying $(basename "$patch")..."
+
+    git apply --check "$patch"
+    git apply "$patch"
+done
+
+echo "All patches applied successfully."
 
     echo
     echo "Mesa commit:"
