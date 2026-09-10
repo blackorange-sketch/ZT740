@@ -262,7 +262,8 @@ prepare_mesa() {
     echo
     echo "Mesa commit:"
 
-    git log -1 --oneline
+    git rev-parse HEAD
+git log -1 --oneline
 
 
     echo
