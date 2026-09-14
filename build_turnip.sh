@@ -2,7 +2,7 @@
 set -o pipefail
 
 ###############################################################################
-# ZT740 Turnip PERF v2.1
+# ZT740 Turnip PERF v2.2
 #
 # Target:
 #   Snapdragon 8 Gen 2
@@ -20,8 +20,10 @@ set -o pipefail
 #   0004 - Depth extensions
 #   0005 - A740 Aurora performance
 #   0006 - Emulator compatibility driconf
-#   0007 - A740 UBWC hint
+#   0009 - Compute flush instrumentation
 #
+# 0007 intentionally excluded:
+#   Quest 3-specific A740 UBWC hint#
 # No LTO:
 #   Mesa explicitly does not support LTO builds.
 ###############################################################################
@@ -130,11 +132,8 @@ compile_mesa() {
 
     local branch="main"
 
-
-    local build_name="ZT740 PERF v2.1 - Adreno 740"
-
-    local output_tag="ZT740-PERF-v2.1"
-
+local build_name="ZT740 PERF v2.2 - Adreno 740"
+local output_tag="ZT740-PERF-v2.2"
 
     echo
     echo "========================================"
@@ -185,12 +184,11 @@ compile_mesa() {
     
 echo
 echo "Applying Mesa patches..."
-
 for patch in \
     "$patch_dir/0004-depth-extensions.patch" \
     "$patch_dir/0005-a740-aurora-performance.patch" \
     "$patch_dir/0006-emulator-compat-driconf.patch" \
-    "$patch_dir/0007-a740-ubwc-hint.patch"
+    "$patch_dir/0009-a740-compute-flush-opt.patch"
 do
     if [ ! -f "$patch" ]; then
         echo "ERROR: Patch not found:"
