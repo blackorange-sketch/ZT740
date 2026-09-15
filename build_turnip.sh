@@ -147,7 +147,8 @@ check_patches() {
         0004-depth-extensions.patch \
         0005-a740-aurora-performance.patch \
         0006-emulator-compat-driconf.patch \
-        0009-a740-compute-flush-opt.patch
+        0009-a740-compute-flush-opt.patch \
+        0009-a740-compute-flush-opt-v2.patch
     do
 
         if [ ! -f "$patch_dir/$patch" ]; then
@@ -324,7 +325,8 @@ apply_patches() {
         0004-depth-extensions.patch \
         0005-a740-aurora-performance.patch \
         0006-emulator-compat-driconf.patch \
-        0009-a740-compute-flush-opt.patch
+        0009-a740-compute-flush-opt.patch \
+        0009-a740-compute-flush-opt-v2.patch
     do
 
         echo
