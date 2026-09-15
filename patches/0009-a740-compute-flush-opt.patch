@@ -1,0 +1,76 @@
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 279a68aac5d..0068415198e 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -9592,6 +9592,71 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
+    /* TODO: We could probably flush less if we add a compute_flush_bits
+     * bitfield.
+     */
++   /*
++    * 0009 instrumentation only.
++    *
++    * Record the flush state immediately before direct compute dispatch.
++    * No bits are modified here.
++    *
++    * Indirect dispatches are intentionally excluded because they have
++    * additional explicit CP synchronization.
++    */
++   if (CHIP == A7XX && !info->indirect) {
++      struct {
++         uint64_t dispatches;
++         uint64_t cache_clean;
++         uint64_t cache_invalidate;
++         uint64_t cche_invalidate;
++         uint64_t bindless_invalidate;
++         uint64_t wait_mem_writes;
++         uint64_t wait_for_idle;
++         uint64_t wait_for_me;
++         uint64_t wait_for_br;
++      } static stats = {};
++
++      stats.dispatches++;
++
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_CACHE_CLEAN)
++         stats.cache_clean++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_CACHE_INVALIDATE)
++         stats.cache_invalidate++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_CCHE_INVALIDATE)
++         stats.cche_invalidate++;
++      if (cmd->state.cache.flush_bits &
++          TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE)
++         stats.bindless_invalidate++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_WAIT_MEM_WRITES)
++         stats.wait_mem_writes++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_WAIT_FOR_IDLE)
++         stats.wait_for_idle++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_WAIT_FOR_ME)
++         stats.wait_for_me++;
++      if (cmd->state.cache.flush_bits & TU_CMD_FLAG_WAIT_FOR_BR)
++         stats.wait_for_br++;
++
++      if ((stats.dispatches % 1000) == 0) {
++         mesa_logi(
++            "ZT740 compute-flush: dispatch=%" PRIu64
++            " CACHEclean=%" PRIu64
++            " CACHEinv=%" PRIu64
++            " CCHEinv=%" PRIu64
++            " BINDLESSinv=%" PRIu64
++            " WAITmem=%" PRIu64
++            " WFI=%" PRIu64
++            " WFM=%" PRIu64
++            " WFB=%" PRIu64,
++            stats.dispatches,
++            stats.cache_clean,
++            stats.cache_invalidate,
++            stats.cche_invalidate,
++            stats.bindless_invalidate,
++            stats.wait_mem_writes,
++            stats.wait_for_idle,
++            stats.wait_for_me,
++            stats.wait_for_br);
++      }
++   }
++
+    tu_emit_cache_flush<CHIP>(cmd);
+ 
+    /* note: no reason to have this in a separate IB */
