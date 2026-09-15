@@ -72,5 +72,29 @@ index 279a68aac5d..0068415198e 100644
 +   }
 +
     tu_emit_cache_flush<CHIP>(cmd);
- 
+
     /* note: no reason to have this in a separate IB */
+diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
+index ae558a53b5b..94079103948 100644
+--- a/src/freedreno/vulkan/tu_util.cc
++++ b/src/freedreno/vulkan/tu_util.cc
+@@ -58,6 +58,7 @@ static const struct debug_control tu_debug_options[] = {
+    { "forcecb", TU_DEBUG_FORCE_CONCURRENT_BINNING },
+    { "computeroundrobin", TU_DEBUG_COMPUTE_ROUND_ROBIN },
+    { "gmem_warmup", TU_DEBUG_GMEM_WARMUP },
++   { "zt740_skip_cche", TU_DEBUG_ZT740_SKIP_CCHE },
+    { NULL, 0 }
+ };
+
+diff --git a/src/freedreno/vulkan/tu_util.h b/src/freedreno/vulkan/tu_util.h
+index 8fc6b49fcb2..73c3537c252 100644
+--- a/src/freedreno/vulkan/tu_util.h
++++ b/src/freedreno/vulkan/tu_util.h
+@@ -76,6 +76,7 @@ enum tu_debug_flags : uint64_t
+    TU_DEBUG_FORCE_CONCURRENT_BINNING = BITFIELD64_BIT(36),
+    TU_DEBUG_COMPUTE_ROUND_ROBIN      = BITFIELD64_BIT(37),
+    TU_DEBUG_GMEM_WARMUP              = BITFIELD64_BIT(38),
++   TU_DEBUG_ZT740_SKIP_CCHE          = BITFIELD64_BIT(39),
+ };
+
+ struct tu_env {
