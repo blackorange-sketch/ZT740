@@ -1,5 +1,5 @@
---- a/mesa/src/freedreno/vulkan/tu_util.h	2026-09-12 04:11:58.923249447 +0200
-+++ b/mesa/src/freedreno/vulkan/tu_util.h	2026-09-15 15:51:01.098917475 +0200
+--- a/src/freedreno/vulkan/tu_util.h	2026-09-12 04:11:58.923249447 +0200
++++ b/src/freedreno/vulkan/tu_util.h	2026-09-15 15:51:01.098917475 +0200
 @@ -76,6 +76,7 @@
     TU_DEBUG_FORCE_CONCURRENT_BINNING = BITFIELD64_BIT(36),
     TU_DEBUG_COMPUTE_ROUND_ROBIN      = BITFIELD64_BIT(37),
@@ -9,8 +9,8 @@
  
  struct tu_env {
 
---- a/mesa/src/freedreno/vulkan/tu_util.cc	2026-09-12 04:11:58.919249447 +0200
-+++ b/mesa/src/freedreno/vulkan/tu_util.cc	2026-09-15 15:51:01.106917475 +0200
+--- a/src/freedreno/vulkan/tu_util.cc	2026-09-12 04:11:58.919249447 +0200
++++ b/src/freedreno/vulkan/tu_util.cc	2026-09-15 15:51:01.106917475 +0200
 @@ -58,6 +58,7 @@
     { "forcecb", TU_DEBUG_FORCE_CONCURRENT_BINNING },
     { "computeroundrobin", TU_DEBUG_COMPUTE_ROUND_ROBIN },
@@ -20,8 +20,8 @@
  };
  
 
---- a/mesa/src/freedreno/vulkan/tu_cmd_buffer.cc	2026-09-14 06:45:09.915649412 +0200
-+++ b/mesa/src/freedreno/vulkan/tu_cmd_buffer.cc	2026-09-15 15:51:01.114917475 +0200
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc	2026-09-14 06:45:09.915649412 +0200
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc	2026-09-15 15:51:01.114917475 +0200
 @@ -403,7 +403,8 @@
        tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CCU_CLEAN_BLIT_CACHE);
     if (CHIP >= A7XX && (flushes & TU_CMD_FLAG_CCHE_INVALIDATE) &&
