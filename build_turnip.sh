@@ -149,6 +149,7 @@ check_patches() {
         0006-emulator-compat-driconf.patch \
         0009-a740-compute-flush-opt.patch \
         0009-a740-compute-flush-opt-v3.patch
+        0010-force-skip-cche.patch
     do
 
         if [ ! -f "$patch_dir/$patch" ]; then
@@ -327,6 +328,7 @@ apply_patches() {
         0006-emulator-compat-driconf.patch \
         0009-a740-compute-flush-opt.patch \
         0009-a740-compute-flush-opt-v3.patch
+        0010-force-skip-cche.patch
     do
 
         echo
