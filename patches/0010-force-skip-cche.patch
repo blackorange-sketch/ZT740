@@ -1,36 +1,27 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ZT740 Test <zt740@test>
-Date: Sat, 19 Sep 2026 22:45:00 +0000
-Subject: [PATCH] tu: permanently force ZT740_SKIP_CCHE (for testing)
-
-Always skip CP_CCHE_INVALIDATE on A7XX without needing
-TU_DEBUG=ZT740_SKIP_CCHE in the environment / emulator.
-
-Also declares the debug flag so 0009-v3 compiles cleanly.
-
----
- src/freedreno/vulkan/tu_cmd_buffer.cc | 2 +-
- src/freedreno/vulkan/tu_util.cc       | 3 +++
- src/freedreno/vulkan/tu_util.h        | 1 +
- 3 files changed, 5 insertions(+), 1 deletion(-)
-
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -404,7 +404,7 @@ tu6_emit_flushes(struct tu_cmd_buffer *cmd_buffer,
-    if (CHIP >= A7XX && (flushes & TU_CMD_FLAG_CCHE_INVALIDATE) &&
-        /* Invalidating UCHE seems to also invalidate CCHE */
+@@ -407,7 +407,7 @@
         !(flushes & TU_CMD_FLAG_CACHE_INVALIDATE)) {
 -      if (TU_DEBUG(ZT740_SKIP_CCHE)) {
-+      if (true /* ZT740: permanent force-skip CCHE for testing */) {
++      if (true) { /* ZT740: permanent force-skip CCHE */
           static std::atomic_uint cche_seen = 0;
           static std::atomic_uint cche_skipped = 0;
           static std::atomic_bool debug_logged = false;
 
+diff --git a/src/freedreno/vulkan/tu_util.h b/src/freedreno/vulkan/tu_util.h
+--- a/src/freedreno/vulkan/tu_util.h
++++ b/src/freedreno/vulkan/tu_util.h
+@@ -70,6 +70,7 @@
+    TU_DEBUG_COMPUTE_ROUND_ROBIN      = BITFIELD64_BIT(37),
+    TU_DEBUG_GMEM_WARMUP              = BITFIELD64_BIT(38),
++   TU_DEBUG_ZT740_SKIP_CCHE          = BITFIELD64_BIT(39),
+ };
+
 diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
 --- a/src/freedreno/vulkan/tu_util.cc
 +++ b/src/freedreno/vulkan/tu_util.cc
-@@ -54,6 +54,9 @@ static const struct debug_control tu_debug_options[] = {
+@@ -54,6 +54,8 @@
     { "startup", TU_DEBUG_STARTUP },
     { "nir", TU_DEBUG_NIR },
     { "nobin", TU_DEBUG_NOBIN },
@@ -39,12 +30,3 @@ diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
     { "sysmem", TU_DEBUG_SYSMEM },
     { "gmem", TU_DEBUG_GMEM },
     { "forcebin", TU_DEBUG_FORCEBIN },
-
-diff --git a/src/freedreno/vulkan/tu_util.h b/src/freedreno/vulkan/tu_util.h
---- a/src/freedreno/vulkan/tu_util.h
-+++ b/src/freedreno/vulkan/tu_util.h
-@@ -70,6 +70,7 @@ enum tu_debug_flags : uint64_t
-    TU_DEBUG_COMPUTE_ROUND_ROBIN      = BITFIELD64_BIT(37),
-    TU_DEBUG_GMEM_WARMUP              = BITFIELD64_BIT(38),
-+   TU_DEBUG_ZT740_SKIP_CCHE          = BITFIELD64_BIT(39),
- };
