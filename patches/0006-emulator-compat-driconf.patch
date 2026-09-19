@@ -31,7 +31,7 @@ diff --git a/src/freedreno/vulkan/00-turnip-defaults.conf b/src/freedreno/vulkan
 index 1ad9b27..08b37bc 100644
 --- a/src/freedreno/vulkan/00-turnip-defaults.conf
 +++ b/src/freedreno/vulkan/00-turnip-defaults.conf
-@@ -69,6 +69,37 @@
+@@ -69,6 +69,45 @@
               -->
              <option name="tu_allow_oob_indirect_ubo_loads" value="true" />
          </engine>
@@ -65,6 +65,14 @@ index 1ad9b27..08b37bc 100644
 +                 opcao que o Mesa upstream ja usa para Creed e Sons of the
 +                 Forest quando o aplicativo depende desse comportamento. -->
 +            <option name="tu_ignore_frag_depth_direction" value="true" />
++        </application>
++        <application name="The Elder Scrolls V: Skyrim"
++                     application_name_match=".*(Skyrim|skyrim).*">
++            <option name="tu_enable_fast_border_color_for_undefined_formats" value="true" />
++            <option name="tu_use_tex_coord_round_nearest_even_mode" value="true" />
++            <option name="tu_allow_oob_indirect_ubo_loads" value="true" />
++            <option name="tu_dont_care_as_load" value="true" />
++            <option name="tu_autotune_algorithm" value="prefer_gmem" />
 +        </application>
          <application name="Sons Of The Forest" application_name_match="SonsOfTheForest.exe">
              <option name="tu_ignore_frag_depth_direction" value="true" />
