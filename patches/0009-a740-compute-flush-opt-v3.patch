@@ -11,7 +11,7 @@ index 279a68aac5d..2067215319f 100644
 -       */
 -      tu_cs_emit_wfi(cs);
 -      tu_cs_emit_pkt7(cs, CP_CCHE_INVALIDATE, 0);
-+      if (TU_DEBUG(ZT740_SKIP_CCHE)) {
++      if (true) /* ZT740 permanent force-skip CCHE */ {
 +         static std::atomic_uint cche_seen = 0;
 +         static std::atomic_uint cche_skipped = 0;
 +         static std::atomic_bool debug_logged = false;
