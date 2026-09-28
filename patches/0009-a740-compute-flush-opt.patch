@@ -1,19 +1,18 @@
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index 279a68aac5d..0068415198e 100644
+index f2fbe00..bb76747 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -9592,6 +9592,71 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
+@@ -9704,6 +9704,70 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
     /* TODO: We could probably flush less if we add a compute_flush_bits
      * bitfield.
      */
 +   /*
-+    * 0009 instrumentation only.
++    * ZT740 compute-flush instrumentation.
 +    *
-+    * Record the flush state immediately before direct compute dispatch.
-+    * No bits are modified here.
++    * Record pending flush state immediately before direct compute dispatch.
++    * No flush bits are modified here.
 +    *
-+    * Indirect dispatches are intentionally excluded because they have
-+    * additional explicit CP synchronization.
++    * Indirect dispatches are intentionally excluded.
 +    */
 +   if (CHIP == A7XX && !info->indirect) {
 +      struct {
@@ -75,7 +74,7 @@ index 279a68aac5d..0068415198e 100644
 
     /* note: no reason to have this in a separate IB */
 diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
-index ae558a53b5b..94079103948 100644
+index ae558a5..9407910 100644
 --- a/src/freedreno/vulkan/tu_util.cc
 +++ b/src/freedreno/vulkan/tu_util.cc
 @@ -58,6 +58,7 @@ static const struct debug_control tu_debug_options[] = {
@@ -87,7 +86,7 @@ index ae558a53b5b..94079103948 100644
  };
 
 diff --git a/src/freedreno/vulkan/tu_util.h b/src/freedreno/vulkan/tu_util.h
-index 8fc6b49fcb2..73c3537c252 100644
+index 8fc6b49..73c3537 100644
 --- a/src/freedreno/vulkan/tu_util.h
 +++ b/src/freedreno/vulkan/tu_util.h
 @@ -76,6 +76,7 @@ enum tu_debug_flags : uint64_t

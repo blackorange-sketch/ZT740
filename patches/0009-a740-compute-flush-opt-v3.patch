@@ -1,8 +1,6 @@
-diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index 279a68aac5d..2067215319f 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -404,11 +404,39 @@ tu6_emit_flushes(struct tu_cmd_buffer *cmd_buffer,
+@@ -425,11 +425,37 @@
     if (CHIP >= A7XX && (flushes & TU_CMD_FLAG_CCHE_INVALIDATE) &&
         /* Invalidating UCHE seems to also invalidate CCHE */
         !(flushes & TU_CMD_FLAG_CACHE_INVALIDATE)) {
@@ -11,38 +9,36 @@ index 279a68aac5d..2067215319f 100644
 -       */
 -      tu_cs_emit_wfi(cs);
 -      tu_cs_emit_pkt7(cs, CP_CCHE_INVALIDATE, 0);
-+      if (true) { /* ZT740 permanent force-skip CCHE */
-+         static std::atomic_uint cche_seen = 0;
-+         static std::atomic_uint cche_skipped = 0;
-+         static std::atomic_bool debug_logged = false;
++      if (CHIP == A7XX && TU_DEBUG(ZT740_SKIP_CCHE)) {
++         /*
++          * ZT740 V3: skip only the actual CCHE invalidate packet.
++          *
++          * Keep flush_bits untouched so this does not alter the command
++          * buffer cache state. This is intentionally limited to A7XX.
++          */
++         static uint64_t cche_seen = 0;
++         static uint64_t cche_skipped = 0;
 +
-+         if (!debug_logged.exchange(true))
++         cche_seen++;
++         cche_skipped++;
++
++         if (cche_skipped == 1)
 +            mesa_logi("ZT740: SKIP_CCHE ACTIVE");
 +
-+         const unsigned seen = ++cche_seen;
-+         const unsigned skipped = ++cche_skipped;
-+
-+         if (skipped == 1 || (skipped % 1000) == 0)
++         if ((cche_seen % 1000) == 0) {
 +            mesa_logi(
-+               "ZT740 CCHE: SKIP seen=%u skipped=%u emitted=0",
-+               seen, skipped);
++               "ZT740 CCHE: SKIP seen=%" PRIu64
++               " skipped=%" PRIu64
++               " emitted=0",
++               cche_seen,
++               cche_skipped);
++         }
 +      } else {
-+         static std::atomic_uint cche_seen = 0;
-+         static std::atomic_uint cche_emitted = 0;
-+
-+         const unsigned seen = ++cche_seen;
-+         const unsigned emitted = ++cche_emitted;
-+
 +         /* CP_CCHE_INVALIDATE is just a plain register write underneath, so
 +          * it needs WFI before it, in order to invalidate at the right point.
 +          */
 +         tu_cs_emit_wfi(cs);
 +         tu_cs_emit_pkt7(cs, CP_CCHE_INVALIDATE, 0);
-+
-+         if (emitted == 1 || (emitted % 1000) == 0)
-+            mesa_logi(
-+               "ZT740 CCHE: EMIT seen=%u skipped=0 emitted=%u",
-+               seen, emitted);
 +      }
     }
     if (CHIP == A7XX && (flushes & TU_CMD_FLAG_RTU_INVALIDATE) &&
