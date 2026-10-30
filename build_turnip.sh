@@ -9,11 +9,12 @@ set -o pipefail
 #   Adreno 740 / FD740
 #
 # Mesa:
-#   main
+#   $MESA_REF (default: main). Set MESA_REF=<sha|tag|branch> to pin a build.
+#   The exact commit is written to meta.json and turnip_workdir/mesa_commit.txt
 #
 # Android:
 #   NDK r28
-#   API 35 (fallback API 34)
+#   platform-sdk-version 35, compiler target API 29 (COMPILE_API)
 #
 # Build:
 #   -O3
@@ -21,12 +22,11 @@ set -o pipefail
 #   Shader cache max size = 4G
 #
 # Patches:
-#   0004-depth-extensions.patch
-#   0005-a740-aurora-performance.patch
-#   0006-emulator-compat-driconf.patch
+#   see the PATCHES array below (single source of truth)
 #
-# Deliberately NOT included:
+# Deliberately NOT in the series (kept in patches/ for reference):
 #   0007-a740-ubwc-hint.patch
+#   0010-force-skip-cche.patch
 #
 # LTO:
 #   disabled
@@ -50,13 +50,28 @@ patch_dir="$script_dir/patches"
 
 ndkver="android-ndk-r28"
 
+# Vulkan/Android platform headers level (meson -Dplatform-sdk-version)
 target_sdk="35"
+
+# Compiler target API (clang triple level). Kept low so the .so also loads on
+# Android 10-14; Amaral's CI uses 29 with platform-sdk-version 35/36.
+compile_api="${COMPILE_API:-29}"
 
 mesa_repo="https://gitlab.freedesktop.org/mesa/mesa.git"
 
-mesa_branch="main"
+mesa_ref="${MESA_REF:-main}"
 
 output_tag="ZT740-PERF-v2.2.1"
+
+# Patch series, applied in this order. Single source of truth for both
+# check_patches and apply_patches.
+PATCHES=(
+    0004-depth-extensions.patch
+    0005-a740-aurora-performance.patch
+    0006-emulator-compat-driconf.patch
+    0009-a740-compute-flush-opt.patch
+    0009-a740-compute-flush-opt-v3.patch
+)
 
 build_name="ZT740 PERF v2.2.1 - Adreno 740"
 
@@ -143,12 +158,7 @@ check_patches() {
 
     local patch
 
-    for patch in \
-        0004-depth-extensions.patch \
-        0005-a740-aurora-performance.patch \
-        0006-emulator-compat-driconf.patch \
-        0009-a740-compute-flush-opt.patch \
-        0009-a740-compute-flush-opt-v3.patch
+    for patch in "${PATCHES[@]}"
     do
 
         if [ ! -f "$patch_dir/$patch" ]; then
@@ -165,6 +175,18 @@ check_patches() {
 
     done
 
+
+    for patch in "$patch_dir"/*.patch; do
+
+        local base
+        base="$(basename "$patch")"
+
+        case " ${PATCHES[*]} " in
+            *" $base "*) ;;
+            *) echo "NOTE: $base is in patches/ but NOT in the series (skipped)" ;;
+        esac
+
+    done
 
     echo
     echo "Patch set OK."
@@ -251,21 +273,36 @@ prepare_mesa() {
     rm -rf mesa
 
 
-    git clone \
-        --depth 100 \
-        -b "$mesa_branch" \
-        "$mesa_repo" \
-        mesa
-
+    git init -q mesa
 
     cd mesa
+
+    git remote add origin "$mesa_repo"
+
+    echo "Fetching Mesa ref: $mesa_ref"
+
+    if ! git fetch --depth 100 origin "$mesa_ref"; then
+
+        echo
+        echo "ERROR: could not fetch Mesa ref: $mesa_ref"
+        echo "(branches, tags and full commit SHAs are accepted)"
+
+        exit 1
+    fi
+
+    git checkout -q FETCH_HEAD
 
 
     echo
     echo "Mesa commit:"
 
-    git rev-parse HEAD
-git log -1 --oneline
+    MESA_COMMIT="$(git rev-parse HEAD)"
+
+    echo "$MESA_COMMIT"
+
+    git log -1 --oneline
+
+    echo "$MESA_COMMIT" > "$workdir/mesa_commit.txt"
 
 
     echo
@@ -321,12 +358,7 @@ apply_patches() {
 
     local patch
 
-    for patch in \
-        0004-depth-extensions.patch \
-        0005-a740-aurora-performance.patch \
-        0006-emulator-compat-driconf.patch \
-        0009-a740-compute-flush-opt.patch \
-        0009-a740-compute-flush-opt-v3.patch
+    for patch in "${PATCHES[@]}"
     do
 
         echo
@@ -386,7 +418,7 @@ prepare_toolchain() {
     fi
 
 
-    export CVER="$target_sdk"
+    export CVER="$compile_api"
 
 
     if [ ! -x "$NDK_BIN/aarch64-linux-android${CVER}-clang" ]; then
@@ -394,9 +426,9 @@ prepare_toolchain() {
         echo
         echo "Android API $CVER compiler not found."
 
-        echo "Trying API 34..."
+        echo "Trying API 29..."
 
-        export CVER="34"
+        export CVER="29"
 
     fi
 
@@ -408,8 +440,8 @@ prepare_toolchain() {
 
         echo
         echo "Checked:"
-        echo "$NDK_BIN/aarch64-linux-android35-clang"
-        echo "$NDK_BIN/aarch64-linux-android34-clang"
+        echo "$NDK_BIN/aarch64-linux-android${compile_api}-clang"
+        echo "$NDK_BIN/aarch64-linux-android29-clang"
 
         exit 1
     fi
@@ -491,7 +523,7 @@ create_cross_file() {
 ar = '$NDK_BIN/llvm-ar'
 c = ['ccache', '$NDK_BIN/aarch64-linux-android${CVER}-clang']
 cpp = ['ccache', '$NDK_BIN/aarch64-linux-android${CVER}-clang++']
-strip = '$NDK_BIN/aarch64-linux-android-strip'
+strip = '$NDK_BIN/llvm-strip'
 
 [host_machine]
 system = 'android'
@@ -513,7 +545,7 @@ EOF
 ar = '$NDK_BIN/llvm-ar'
 c = ['$NDK_BIN/aarch64-linux-android${CVER}-clang']
 cpp = ['$NDK_BIN/aarch64-linux-android${CVER}-clang++']
-strip = '$NDK_BIN/aarch64-linux-android-strip'
+strip = '$NDK_BIN/llvm-strip'
 
 [host_machine]
 system = 'android'
@@ -600,6 +632,10 @@ build_mesa() {
         -Dvulkan-beta=true \
         -Ddefault_library=shared \
         -Dshader-cache-max-size=4G \
+        -Db_ndebug=true \
+        -Dstrip=true \
+        -Dandroid-libbacktrace=disabled \
+        -Dvideo-codecs= \
         -Dzstd=disabled \
         -Dwerror=false \
         --force-fallback-for=spirv-tools,spirv-headers
@@ -722,12 +758,12 @@ package_driver() {
 {
   "schemaVersion": 1,
   "name": "$build_name",
-  "description": "Mesa Main Turnip PERF v2.2.1 for Snapdragon 8 Gen 2 / Adreno 740",
+  "description": "Mesa ${MESA_COMMIT:0:10} Turnip PERF v2.2.1 for Snapdragon 8 Gen 2 / Adreno 740",
   "author": "blackorange-sketch",
   "packageVersion": "1",
   "vendor": "Mesa",
   "driverVersion": "$output_tag",
-  "minApi": 28,
+  "minApi": 29,
   "libraryName": "vulkan.ad07XX.so"
 }
 EOF

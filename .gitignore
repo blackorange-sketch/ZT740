@@ -1,0 +1,6 @@
+mesa*/
+tmp/
+turnip_workdir/
+*.bak
+*.log.gz
+*.diff

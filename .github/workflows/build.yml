@@ -1,9 +1,20 @@
-name: Build Turnip Clean
+name: Build Turnip
 
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'README.md'
   workflow_dispatch:
+    inputs:
+      mesa_ref:
+        description: 'Mesa ref (branch, tag or full SHA)'
+        required: false
+        default: 'main'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -11,6 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -20,6 +32,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            ccache \
             ninja-build \
             patchelf \
             unzip \
@@ -28,16 +41,33 @@ jobs:
             git \
             perl \
             python3-pip \
-            glslang-tools \
-            llvm \
-            clang
+            glslang-tools
 
           pip3 install --break-system-packages meson mako
 
+      - name: Cache NDK
+        uses: actions/cache@v4
+        with:
+          path: turnip_workdir/android-ndk-r28
+          key: ndk-r28-linux
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.run_id }}
+          restore-keys: ccache-
+
       - name: Build
+        env:
+          MESA_REF: ${{ inputs.mesa_ref || 'main' }}
         run: |
           chmod +x build_turnip.sh
           ./build_turnip.sh
+
+      - name: Read Mesa commit
+        id: mesa
+        run: echo "sha=$(cat turnip_workdir/mesa_commit.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Upload Driver Artifact
         uses: actions/upload-artifact@v4
@@ -50,4 +80,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
+          body: |
+            Mesa commit: `${{ steps.mesa.outputs.sha }}`
+            Patches: see `PATCHES` in build_turnip.sh
           files: turnip_workdir/Turnip-*.zip
