@@ -344,6 +344,36 @@ prepare_mesa() {
 
 
 ###############################################################################
+# SUBALLOCATOR TUNING (128 KiB -> 512 KiB), context-independent
+###############################################################################
+
+tune_suballocators() {
+
+    echo
+    echo "Tuning pipeline/profiling suballocators to 512 KiB..."
+
+    local f="$workdir/mesa/src/freedreno/vulkan/tu_device.cc"
+
+    # pipeline_suballoc: size is on the same line as the object
+    sed -i '/&device->pipeline_suballoc, device, 128 \* 1024,/s/128 \* 1024/512 * 1024/' "$f"
+
+    # kgsl_profiling_suballoc: size is on the next line
+    sed -i '/&device->kgsl_profiling_suballoc, device,/{n;s/128 \* 1024/512 * 1024/}' "$f"
+
+    local n
+    n="$(grep -c '512 \* 1024' "$f" || true)"
+
+    if [ "$n" -ge 2 ]; then
+        echo "OK: $n suballocator sizes set to 512 KiB."
+    else
+        echo "WARNING: suballocator tuning did not match ($n/2) - upstream"
+        echo "         code changed. Build continues WITHOUT this tweak."
+    fi
+
+}
+
+
+###############################################################################
 # APPLY PATCHES
 ###############################################################################
 
@@ -361,12 +391,19 @@ apply_patches() {
     for patch in "${PATCHES[@]}"
     do
 
+        # 0005 (GCM hunk) must tolerate small context drift in newer Mesa
+        apply_opts=""
+
+        case "$patch" in
+            0005-*) apply_opts="-C1" ;;
+        esac
+
         echo
         echo "Checking:"
         echo "$patch"
 
 
-        git apply \
+        git apply $apply_opts \
             --check \
             "$patch_dir/$patch"
 
@@ -375,7 +412,7 @@ apply_patches() {
         echo "$patch"
 
 
-        git apply \
+        git apply $apply_opts \
             "$patch_dir/$patch"
 
 
@@ -386,6 +423,9 @@ apply_patches() {
 
     echo
     echo "All patches applied successfully."
+
+    tune_suballocators
+
 
 }
 

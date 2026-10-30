@@ -36,7 +36,8 @@ re-derivados da dependencia real de cada mudanca.
    em qualquer familia. E' o caminho para medir nas familias excluidas.
 
 2. tu: suballocadores de pipeline e de profiling KGSL de 128 para 512 KiB, em
-   TODAS as familias.
+   TODAS as familias. (Aplicado por sed em build_turnip.sh, nao por este patch:
+   o hunk dependia do texto do cast de tu_bo_alloc_flags, que mudou no upstream.)
 
    Sem dependencia de hardware e com custo limitado: a alocacao e' preguicosa
    (suballoc->bo = NULL no init), o tamanho e' MAX2(pedido, default_size) e o
@@ -90,29 +91,3 @@ index a4e6582..9817ed2 100644
           progress |= OPT(s, nir_opt_gcm, false);
        nir_opt_peephole_select_options peephole_select_options = {
           .limit = 16,
-diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
-index 3ccc34c..adf5377 100644
---- a/src/freedreno/vulkan/tu_device.cc
-+++ b/src/freedreno/vulkan/tu_device.cc
-@@ -3063,19 +3063,19 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
-    if (device->vk.enabled_features.customBorderColors)
-       global_size += TU_BORDER_COLOR_COUNT * sizeof(struct bcolor_entry);
- 
-    tu_bo_suballocator_init(
--      &device->pipeline_suballoc, device, 128 * 1024,
-+      &device->pipeline_suballoc, device, 512 * 1024,
-       (enum tu_bo_alloc_flags) (TU_BO_ALLOC_GPU_READ_ONLY |
-                                 TU_BO_ALLOC_ALLOW_DUMP |
-                                 TU_BO_ALLOC_INTERNAL_RESOURCE |
-                                 tu_bo_ib_flags(device)),
-       "pipeline_suballoc");
-    if (is_kgsl(physical_device->instance)) {
-       tu_bo_suballocator_init(&device->kgsl_profiling_suballoc, device,
--                              128 * 1024, TU_BO_ALLOC_INTERNAL_RESOURCE,
-+                              512 * 1024, TU_BO_ALLOC_INTERNAL_RESOURCE,
-                               "kgsl_profiling_suballoc");
-    }
- 
-    tu_bo_suballocator_init(&device->event_suballoc, device,
-       getpagesize(), TU_BO_ALLOC_INTERNAL_RESOURCE,
-       "event_suballoc");
